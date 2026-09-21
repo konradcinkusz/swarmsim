@@ -19,6 +19,9 @@ public class HealthEndpointTests(WebApplicationFactory<Program> factory) : IClas
         // process runs in Simulated mode (P8) — the same zero-dependency path
         // `git clone && dotnet run` gets.
         Assert.Contains("Simulated", body);
+        // Same for Auth:Authority — Open mode (no token required anywhere) is what a
+        // zero-config `dotnet run` gets; AuthEndpointTests covers the Enforced side.
+        Assert.Contains("Open", body);
     }
 
     [Fact]

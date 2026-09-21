@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using SwarmApi.Api;
 using SwarmApi.Api.Endpoints;
 using SwarmApi.Application;
+using SwarmApi.Domain;
 using SwarmApi.Infrastructure;
 using SwarmApi.ServiceDefaults;
 
@@ -21,11 +22,13 @@ using (var bootstrapLoggerFactory = LoggerFactory.Create(logging => logging.AddC
 {
     var bootstrapLogger = bootstrapLoggerFactory.CreateLogger("Startup");
     await builder.Services.AddSwarmBridgeAsync(builder.Configuration, bootstrapLogger);
+    builder.Services.AddSwarmAuthentication(builder.Configuration, bootstrapLogger);
 }
 
 builder.Services.AddSingleton<MissionService>();
 builder.Services.AddHealthChecks()
-    .AddCheck<SwarmBridgeHealthCheck>("swarm_bridge", tags: ["live"]);
+    .AddCheck<SwarmBridgeHealthCheck>("swarm_bridge", tags: ["live"])
+    .AddCheck<AuthHealthCheck>("auth", tags: ["live"]);
 
 var app = builder.Build();
 
@@ -40,11 +43,14 @@ if (app.Services.GetRequiredService<ISwarmBridge>() is IAsyncDisposable disposab
 }
 
 app.UseCors(SwarmApi.ServiceDefaults.Extensions.FrontendCorsPolicy);
+app.UseAuthentication();
+app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+var authStatus = app.Services.GetRequiredService<AuthStatus>();
 app.MapDefaultEndpoints();
-app.MapMissionEndpoints();
+app.MapMissionEndpoints(requireAuthentication: authStatus.Mode == AuthMode.Enforced);
 app.MapSwarmStateEndpoints();
 
 app.Run();

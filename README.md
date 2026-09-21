@@ -173,6 +173,26 @@ curl -s http://localhost:5000/api/swarm/state | jq
 (`swarmBridge: "Connected" | "Simulated"`), and the dashboard's badge shows the same
 thing.
 
+### Authentication (optional)
+
+`Auth:Authority` unset (the default above) runs `SwarmApi.Api` in **Open** mode — every
+endpoint reachable with no token, exactly as in the two sections above. Set it to an
+[`authservice`](https://github.com/konradcinkusz/authservice) instance's base URL to
+switch to **Enforced** mode, which requires a valid bearer token (RS256, validated via
+that service's JWKS) on `POST /api/missions` — the mutating endpoint an MCP-driven Agent
+would call. `GET /health` reports which mode is active (`auth: "Open" | "Enforced"`).
+See [`docs/adr/0005-mcp-server-and-bearer-auth.md`](docs/adr/0005-mcp-server-and-bearer-auth.md)
+for the reasoning and exact scope, and `docker compose --profile auth up` in `docker/`
+to run a local `authservice` instance alongside the stack (needs a generated signing key
+first — see that profile's comments in `docker/docker-compose.yml`).
+
+### MCP server
+
+[`mcp_server/`](mcp_server/README.md) exposes `get_swarm_status` and `start_mission` as
+MCP tools over this same REST API — no new ROS 2 bridge, swarm-level by construction
+since it wraps the existing `Mission`/`SwarmState` domain layer rather than per-drone ROS
+topics. See that directory's README for tool details and client configuration.
+
 ## Tutorial: everything, step by step
 
 A longer walkthrough for verifying the whole platform end to end, not just the fast path above.
@@ -264,6 +284,7 @@ A longer walkthrough for verifying the whole platform end to end, not just the f
 | `simulation/` | Gazebo worlds, per-drone PX4 SITL configs |
 | `swarm_coordination/` | ROS 2 (ament_python) package: waypoint/formation logic + node adapters |
 | `backend/` | .NET solution: `SwarmApi.Domain/Application/Infrastructure/ServiceDefaults/Api` |
+| `mcp_server/` | MCP server exposing swarm-level tools over `SwarmApi.Api`'s REST surface — no ROS dependency |
 | `docs/adr/` | Architectural decision records |
 | `docs/architecture/` | Compliance checklist against `architecture-standards`, open deviations register |
 | `mkdocs.yml`, `docs/index.md` | Source for the [docs site](https://konradcinkusz.github.io/swarmsim/) (built by `.github/workflows/pages.yml`) |
@@ -279,14 +300,25 @@ reviewer can ask about (`architecture-standards` REPO-BASELINE §4b).
 |---|---|---|
 | `SwarmApi.Domain` | 0 | Pure C#, no packages |
 | `SwarmApi.Application` | 0 | Pure C#, no packages |
-| `SwarmApi.Infrastructure` | 0 (packages) | `FrameworkReference: Microsoft.AspNetCore.App` for DI/Config/Logging abstractions + `System.Net.WebSockets` (BCL) |
+| `SwarmApi.Infrastructure` | 1 | `FrameworkReference: Microsoft.AspNetCore.App` for DI/Config/Logging abstractions + `System.Net.WebSockets` (BCL), plus `Microsoft.AspNetCore.Authentication.JwtBearer` (see below) |
 | `SwarmApi.ServiceDefaults` | 0 (packages) | Same `FrameworkReference` as above |
 | `SwarmApi.Api` | 0 | ASP.NET Core minimal APIs only |
 | Test projects (×3) | 5 shared | `Microsoft.NET.Test.Sdk`, `xunit`, `xunit.runner.visualstudio`, `Microsoft.AspNetCore.Mvc.Testing`, `coverlet.collector` — test tooling only |
 
-Runtime code ships **zero third-party NuGet packages**. Everything it uses (minimal
-APIs, `System.Net.WebSockets.ClientWebSocket`, health checks, `System.Text.Json`) is in
-the ASP.NET Core shared framework or the BCL.
+Runtime code ships **one third-party NuGet package**, a deliberate, recorded exception —
+[`docs/adr/0005-mcp-server-and-bearer-auth.md`](docs/adr/0005-mcp-server-and-bearer-auth.md).
+Everything else (minimal APIs, `System.Net.WebSockets.ClientWebSocket`, health checks,
+`System.Text.Json`) is in the ASP.NET Core shared framework or the BCL.
+
+**`mcp_server/` (Python, `pyproject.toml`):**
+
+| Kind | Packages |
+|---|---|
+| Runtime | `mcp` |
+| Dev/test (pip) | `ruff`, `pytest` |
+
+Only `swarm_client.py` (pure request-building) needs neither `mcp` nor a network
+connection — the same pure/adapter split as `swarm_coordination`.
 
 **`swarm_coordination/` (ROS 2 ament_python package, `package.xml`):**
 
@@ -324,15 +356,19 @@ cd backend && dotnet test SwarmPlatform.sln
 # Python (swarm_coordination pure logic; no ROS 2 install required)
 cd swarm_coordination && ruff check . && pytest
 
+# Python (mcp_server; no `mcp` install required for the tested module)
+cd mcp_server && ruff check . && pytest
+
 # Simulation config (no GPU/build required)
 docker compose -f docker/docker-compose.yml config -q
+docker compose -f docker/docker-compose.yml --profile auth config -q
 
 # Docs site (no GPU/build required)
 pip install mkdocs-material && mkdocs build --strict
 ```
 
-All four run in CI on every push and pull request (`.github/workflows/ci.yml`), along
-with Dockerfile linting (`hadolint`) and secret scanning (`gitleaks`).
+All of the above run in CI on every push and pull request (`.github/workflows/ci.yml`),
+along with Dockerfile linting (`hadolint`) and secret scanning (`gitleaks`).
 
 ## Standards
 
