@@ -10,6 +10,7 @@ swarm_coordination/
 ├── trajectory.py     # Vector3, step_towards — pure math, no rclpy import
 ├── waypoints.py       # WaypointQueue — advance/step over a route
 ├── formation.py       # line/V offsets, follower targets, collision check
+├── scenarios/          # scenario-testing contract (Scenario/Verdict/Violation)
 └── nodes/              # thin rclpy adapters over the three modules above
     ├── waypoint_follower_node.py
     └── formation_commander_node.py
@@ -20,6 +21,18 @@ test/                           # pytest against trajectory/waypoints/formation 
 `test/` never imports `nodes/` — that is what lets `pytest` (and CI) run these tests
 with plain `pip install pytest`, no ROS 2 installation required. See `conftest.py` and
 `pyproject.toml` for how.
+
+## Scenario testing
+
+`scenarios/` is the contract a swarm-testing-as-a-service scenario library implements
+against: a `Scenario` is a named, self-contained test case (it owns its own setup and
+perturbation, so evaluating it is just `scenario.run()`), returning a `Verdict`
+(pass/fail plus, on failure, the concrete `Violation`s a future report/replay layer
+will render). There's no central registry to register into — each scenario is its own
+module that only imports from `scenarios/`, so multiple scenarios can be added in
+parallel without touching a shared file. See `scenarios/example_static_formation.py`
+for a minimal reference scenario, and `test/test_scenario_contract.py` for the contract
+tests.
 
 ## Prerequisites to actually run a node
 
