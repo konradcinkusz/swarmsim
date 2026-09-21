@@ -1,0 +1,24 @@
+name: Release
+
+# Tag-driven, not branch-driven (architecture-standards P12): pushing a `vX.Y.Z` tag
+# is the one action that creates a release, so a release is a deliberate, recorded
+# decision rather than a side effect of merging to main.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -97,6 +97,22 @@ jobs:
           sudo apt-get install -y --no-install-recommends libxml2-utils
           find simulation -name '*.sdf' -print0 | xargs -0 -n1 xmllint --noout
 
+  docs:
+    name: Docs site build (mkdocs --strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install mkdocs-material
+        run: pip install mkdocs-material
+
+      - name: Build (fails on any broken internal link/nav entry)
+        run: mkdocs build --strict
+
   secret-scan:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest

@@ -1,0 +1,62 @@
+site_name: swarmsim
+site_description: >-
+  Drone-swarm simulation and coordination platform — Gazebo + PX4 SITL + ROS 2,
+  with a .NET backend exposing mission and swarm-state REST APIs.
+site_url: https://konradcinkusz.github.io/swarmsim/
+repo_url: https://github.com/konradcinkusz/swarmsim
+repo_name: konradcinkusz/swarmsim
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - content.code.copy
+    - content.action.edit
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Architecture:
+      - Overview: architecture/README.md
+      - Open deviations: architecture/DEVIATIONS.md
+  - Decision records:
+      - "0001 · Simulation stack selection": adr/0001-simulation-stack-selection.md
+      - "0002 · Composition root split": adr/0002-composition-root-split.md
+      - "0003 · Rosbridge degrade pattern": adr/0003-rosbridge-degrade-pattern.md
+      - "0004 · CI scope for simulation stack": adr/0004-ci-scope-for-simulation-stack.md
+
+# `--strict` (used in CI) turns a broken internal link into a build failure instead
+# of a silently wrong page — REPO-BASELINE's "test configs rot" rule applied to docs.
+# No custom validation overrides: mkdocs' own defaults + --strict catch a real broken
+# link; the two false positives found while wiring this up were content bugs (a link
+# escaping docs_dir, a directory link) fixed at the source, not validation noise.
