@@ -1,8 +1,11 @@
 using System.Net.WebSockets;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
 using SwarmApi.Application;
+using SwarmApi.Domain;
 
 namespace SwarmApi.Infrastructure;
 
@@ -53,6 +56,49 @@ public static class ServiceCollectionExtensions
         }
 
         services.AddSingleton<ISwarmBridge, SimulatedSwarmBridge>();
+        return services;
+    }
+
+    /// <summary>
+    /// Registers JWT bearer authentication against an external `authservice` instance
+    /// (RS256, JWKS discovery via `/.well-known/openid-configuration`) when
+    /// <c>Auth:Authority</c> is configured; otherwise registers no authentication scheme
+    /// and reports <see cref="AuthMode.Open"/> (P8) — every endpoint stays reachable with
+    /// no token, exactly as before this dependency existed. This is the one place that
+    /// decision is made — see docs/adr/0005-mcp-server-and-bearer-auth.md. Callers read
+    /// the resolved <see cref="AuthStatus"/> (DI singleton) to decide which endpoints to
+    /// gate; this method never touches routing itself.
+    /// </summary>
+    public static IServiceCollection AddSwarmAuthentication(
+        this IServiceCollection services, IConfiguration configuration, ILogger logger)
+    {
+        var options = configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>()
+            ?? new AuthOptions();
+
+        if (string.IsNullOrWhiteSpace(options.Authority))
+        {
+            logger.LogInformation("Auth:Authority not configured; running in Open mode (no authentication).");
+            services.AddAuthorization();
+            services.AddSingleton(new AuthStatus(AuthMode.Open));
+            return services;
+        }
+
+        services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(bearerOptions =>
+            {
+                bearerOptions.MetadataAddress = $"{options.Authority.TrimEnd('/')}/.well-known/openid-configuration";
+                bearerOptions.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidIssuer = options.Issuer,
+                    ValidAudience = options.Audience,
+                    ValidateIssuerSigningKey = true,
+                };
+            });
+        services.AddAuthorization();
+        services.AddSingleton(new AuthStatus(AuthMode.Enforced));
+
+        logger.LogInformation(
+            "Auth:Authority set to {Authority}; running in Enforced mode.", options.Authority);
         return services;
     }
 }

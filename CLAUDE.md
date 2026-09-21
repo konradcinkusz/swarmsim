@@ -28,6 +28,7 @@ reasoning; check there before assuming a gap is accidental.
 | `simulation/` | Gazebo worlds, PX4 per-drone configs | — |
 | `swarm_coordination/` | ROS 2 ament_python package: waypoint/formation logic + node wrappers | `colcon`, `pytest`, `ruff` |
 | `backend/` | .NET solution: `SwarmApi.Domain/Application/Infrastructure/ServiceDefaults/Api` | `dotnet` |
+| `mcp_server/` | MCP server: swarm-level tools over `SwarmApi.Api`'s REST surface, no ROS dependency | `pytest`, `ruff` |
 | `docs/adr/` | One decision record per architectural choice | — |
 | `docs/architecture/` | This repo's compliance checklist and deviation register | — |
 
@@ -46,7 +47,13 @@ reasoning; check there before assuming a gap is accidental.
   GPU-capable machine before relying on it.
 - Any new external dependency (a second bridge transport, a cloud API) needs a working
   fallback per P8, following the pattern in
-  `docs/adr/0003-rosbridge-degrade-pattern.md`.
+  `docs/adr/0003-rosbridge-degrade-pattern.md`. `SwarmApi.Api`'s bearer auth against
+  `authservice` follows the same shape (Open/Enforced) — see
+  `docs/adr/0005-mcp-server-and-bearer-auth.md`.
+- Changing `mcp_server/`: keep `server.py` (MCP tool registration, needs the `mcp`
+  package) thin; request-building and payload shaping belong in `swarm_client.py`, which
+  stays free of the `mcp` import so `pytest` can exercise it with no network and no `mcp`
+  install — mirrors the `swarm_coordination` node/pure-logic split.
 
 ## Local verification
 
@@ -54,7 +61,10 @@ reasoning; check there before assuming a gap is accidental.
   not have a `dotnet` SDK reachable through its network policy; do not assume one is
   available everywhere).
 - Python: `cd swarm_coordination && ruff check . && pytest`.
-- Simulation config: `docker compose -f docker/docker-compose.yml config -q`.
+- MCP server: `cd mcp_server && ruff check . && pytest` (no `mcp` install needed — only
+  `swarm_client.py` is exercised).
+- Simulation config: `docker compose -f docker/docker-compose.yml config -q` (and
+  `--profile auth config -q` for the optional `authservice` services).
 
 Do not attempt to build `Dockerfile.sim` or run Gazebo/PX4 SITL inside an unattended CI
 or sandbox context — it needs GPU/X11 access and a long build budget that CI does not

@@ -36,10 +36,70 @@ services:
       # degrades to the in-memory simulated provider instead of failing to start — see
       # docs/adr/0003-rosbridge-degrade-pattern.md.
       - RosBridge__Url=ws://sim:9090
+      # Unset (default) keeps SwarmApi.Api in Open auth mode — exactly today's
+      # behavior, no token needed anywhere. Run with `--profile auth` and set
+      # SWARM_AUTH_AUTHORITY=http://authservice:8080 to require a bearer token on
+      # POST /api/missions instead — see docs/adr/0005-mcp-server-and-bearer-auth.md.
+      - Auth__Authority=${SWARM_AUTH_AUTHORITY:-}
+      - Auth__Audience=SwarmApi
     ports:
       - "8080:8080"
     depends_on:
       - sim
+    networks:
+      - swarmsim-net
+
+  # Both services below only start with `docker compose --profile auth up` (or
+  # COMPOSE_PROFILES=auth) — opt-in, so the default `docker compose up` quickstart
+  # gains no new build step and no new network dependency. See
+  # docs/adr/0005-mcp-server-and-bearer-auth.md.
+  authservice-db:
+    image: postgres:16-alpine
+    profiles:
+      - auth
+    environment:
+      POSTGRES_DB: authservice
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - swarmsim-net
+
+  authservice:
+    profiles:
+      - auth
+    # No ghcr.io/konradcinkusz/authservice tag has been published yet (no v* release
+    # has been tagged in that repository at the time of writing) — build from its git
+    # context as an interim measure. Swap to
+    # `image: ghcr.io/konradcinkusz/authservice:vX.Y.Z` once one exists (see that
+    # repo's README, "Releasing").
+    build:
+      context: https://github.com/konradcinkusz/authservice.git
+      dockerfile: src/AuthService/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - DatabaseProvider=PostgreSQL
+      - ConnectionStrings__DefaultConnection=Host=authservice-db;Port=5432;Database=authservice;Username=postgres;Password=postgres
+      # RS256, not authservice's own HS256 zero-ceremony default: SwarmApi.Api is a
+      # second service validating these tokens the moment this profile is used, and
+      # that is exactly the case authservice's own README says RS256 is for. Generate
+      # your own key first — never commit it:
+      #   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt-signing.pem
+      #   export AUTHSERVICE_JWT_PRIVATE_KEY_PEM="$(cat jwt-signing.pem)"
+      - Jwt__Algorithm=RS256
+      - Jwt__PrivateKeyPem=${AUTHSERVICE_JWT_PRIVATE_KEY_PEM:-}
+      - Jwt__Issuer=AuthService
+      - Jwt__Audience=SwarmApi
+      - Cors__AllowedOrigins__0=http://localhost:8080
+    ports:
+      - "8081:8080"
+    depends_on:
+      authservice-db:
+        condition: service_healthy
     networks:
       - swarmsim-net
 

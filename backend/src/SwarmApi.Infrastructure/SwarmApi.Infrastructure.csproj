@@ -12,7 +12,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Not part of Microsoft.AspNetCore.App's shared framework, unlike everything else
+         referenced here — see Directory.Packages.props and
+         docs/adr/0005-mcp-server-and-bearer-auth.md. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\SwarmApi.Application\SwarmApi.Application.csproj" />
+    <ProjectReference Include="..\SwarmApi.Domain\SwarmApi.Domain.csproj" />
   </ItemGroup>
 
 </Project>
