@@ -4,7 +4,7 @@
 # `backend/` (see docker-compose.yml's `api` service), so all paths below are
 # relative to that directory.
 
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Central package management files + every csproj first, so `dotnet restore` is
