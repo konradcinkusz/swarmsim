@@ -64,6 +64,28 @@ jobs:
       - name: pytest
         run: pytest -v
 
+  mcp-server:
+    name: Python lint & test (mcp_server)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp_server
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install ruff pytest
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: pytest
+        run: pytest -v
+
   docker-lint:
     name: Dockerfile lint (hadolint)
     runs-on: ubuntu-latest
@@ -90,6 +112,9 @@ jobs:
 
       - name: Validate docker-compose config
         run: docker compose -f docker/docker-compose.yml config -q
+
+      - name: Validate docker-compose config (auth profile)
+        run: docker compose -f docker/docker-compose.yml --profile auth config -q
 
       - name: Validate Gazebo world SDF/XML well-formedness
         run: |

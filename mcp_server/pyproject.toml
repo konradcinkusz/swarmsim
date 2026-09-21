@@ -1,0 +1,23 @@
+[project]
+name = "mcp-server-swarmsim"
+version = "0.1.0"
+description = "MCP server exposing swarm-level tools (get_swarm_status, start_mission) over SwarmApi.Api's existing REST surface."
+requires-python = ">=3.10"
+dependencies = ["mcp>=1.2.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["mcp_server*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]

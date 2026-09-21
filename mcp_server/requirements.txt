@@ -1,7 +1,0 @@
-# Official MCP Python SDK. Pinned below 2.0 deliberately: mcp 2.x renamed
-# `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer` (a breaking API
-# change), and this proof-of-concept is written against the FastMCP API.
-mcp>=1.6.0,<2.0.0
-
-# HTTP client used to call SwarmApi.Api.
-httpx>=0.27

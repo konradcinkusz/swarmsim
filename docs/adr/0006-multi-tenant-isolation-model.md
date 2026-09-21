@@ -65,12 +65,14 @@ tenant run:
   the orchestrator instantiates N times. Designing that orchestrator is out of scope for
   this ADR; it is the recorded consequence, not the decision.
 
-Interaction with the auth-approach ADR: that ADR owns *authenticating* a request and
-producing a tenant identity; this ADR owns what happens once that identity exists — it
-is the opaque `<tenant-id>` used to name and network-isolate that tenant's stack. The
-orchestrator trusts the tenant identity the auth-approach ADR's mechanism hands it and
-does not re-derive it. Neither ADR is meaningful without the other: per-tenant
-containers with no authenticated tenant identity routing requests to them isolate
+Interaction with the auth ADR ([ADR-0005](0005-mcp-server-and-bearer-auth.md)): that
+ADR wires JWT bearer auth against an external `authservice`, but the tokens it validates
+today carry no tenant claim — it authenticates a caller as *an* agent, not as a specific
+tenant, and gates only `POST /api/missions`. This ADR's isolation is only as strong as
+a tenant identity upstream of it: until `authservice` issues tokens scoped per tenant (a
+follow-up to ADR-0005, not decided here), the orchestrator has no trustworthy
+`<tenant-id>` claim to key container namespaces on. Neither ADR is meaningful alone:
+per-tenant containers with no authenticated tenant identity routing requests to them isolate
 nothing, and an authenticated tenant identity with a shared backend behind it is the
 shared-instance option this ADR rejects.
 
