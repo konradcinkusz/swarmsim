@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>swarmsim — swarm dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Swarm dashboard</h1>
+    <div id="bridge-mode" class="badge" aria-live="polite">connecting…</div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Top-down view</h2>
+      <canvas id="plot" width="480" height="480" aria-label="Top-down plot of drone positions"></canvas>
+    </section>
+
+    <section class="panel">
+      <h2>Drones</h2>
+      <table id="drone-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Status</th>
+            <th>Position (x, y, z)</th>
+            <th>Battery</th>
+            <th>Waypoint</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="empty-state" hidden>No drones yet — dispatch a mission below or via <code>POST /api/missions</code>.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Dispatch a demo mission</h2>
+      <p>
+        Sends a small waypoint mission to the active swarm bridge (real rosbridge
+        connection if configured, otherwise the in-memory simulated fallback — see
+        the bridge mode badge above).
+      </p>
+      <div class="controls">
+        <label>
+          Drones
+          <input id="demo-drone-count" type="number" min="1" max="5" value="3" />
+        </label>
+        <label>
+          Mode
+          <select id="demo-mode">
+            <option value="waypoint">Waypoint (parallel lanes)</option>
+            <option value="formation">Formation (leader-follower)</option>
+          </select>
+        </label>
+        <button id="demo-mission-btn" type="button">Start demo mission</button>
+      </div>
+      <p id="demo-status" role="status"></p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

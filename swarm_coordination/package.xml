@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>swarm_coordination</name>
+  <version>0.1.0</version>
+  <description>
+    Waypoint-following and leader-follower formation coordination for a multi-drone
+    (PX4 SITL + Gazebo) swarm. Pure trajectory/formation math is ROS-free and unit
+    tested; ROS 2 nodes are thin MAVROS adapters over it.
+  </description>
+  <maintainer email="konradcinkusz@gmail.com">Konrad Cinkusz</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>mavros_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

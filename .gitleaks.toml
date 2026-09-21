@@ -1,0 +1,18 @@
+# gitleaks configuration — swarmsim
+#
+# Runs in CI (.github/workflows/ci.yml, job `secret-scan`) on every push and pull
+# request. Architecture-standards P5 makes this mandatory: "a repository without
+# a scanner is assumed to contain credentials until proven otherwise."
+#
+# If a secret ever does land here: ROTATE FIRST, clean history second. A pushed
+# commit is disclosed the moment it is pushed; scrubbing without rotating is theatre.
+
+title = "swarmsim secret scanning"
+
+[extend]
+# The upstream provider rule set (AWS, GitHub, Slack, generic API keys, JWTs, ...).
+# This repo has no first-party secret shape of its own yet: the mission API takes no
+# credentials, and the rosbridge WebSocket URL (`RosBridge__Url`) is a host:port, not
+# a secret. The rule for whoever adds the first real credential (a cloud deployment
+# token, a signing key): its detection rule ships in the same commit that introduces it.
+useDefault = true

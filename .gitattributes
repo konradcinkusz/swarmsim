@@ -1,0 +1,25 @@
+# A real .gitattributes — decorative templates with every rule commented out are
+# not configuration. See architecture-standards/docs/guides/REPO-BASELINE.md §1.
+
+# Normalise line endings on the way in; check out LF everywhere. A CRLF sneaking
+# into a shell script or a ROS 2 launch file makes it fail with an unreadable
+# "bad interpreter" error inside the Linux-only simulation container.
+* text=auto eol=lf
+
+*.sh     text eol=lf
+*.py     text eol=lf
+*.cs     text eol=lf
+*.md     text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.sdf    text eol=lf
+*.xml    text eol=lf
+*.csproj text eol=lf
+
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.pdf  binary
+
+docs/** linguist-documentation=true

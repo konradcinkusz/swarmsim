@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dotnet:
+    name: .NET build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore backend/SwarmPlatform.sln
+
+      - name: Build
+        run: dotnet build backend/SwarmPlatform.sln --no-restore -c Release
+
+      - name: Test
+        run: >
+          dotnet test backend/SwarmPlatform.sln --no-build -c Release
+          --logger "trx" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-test-results
+          path: TestResults
+
+  python:
+    name: Python lint & test (swarm_coordination)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: swarm_coordination
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install ruff pytest
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: pytest
+        run: pytest -v
+
+  docker-lint:
+    name: Dockerfile lint (hadolint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: hadolint — Dockerfile.sim
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile.sim
+          config: .hadolint.yaml
+
+      - name: hadolint — Dockerfile.api
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile.api
+          config: .hadolint.yaml
+
+  simulation-config:
+    name: Simulation config validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose config
+        run: docker compose -f docker/docker-compose.yml config -q
+
+      - name: Validate Gazebo world SDF/XML well-formedness
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          find simulation -name '*.sdf' -print0 | xargs -0 -n1 xmllint --noout
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        run: >
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect
+          --source=/repo --config=/repo/.gitleaks.toml --no-git -v

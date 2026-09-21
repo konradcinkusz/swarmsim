@@ -1,0 +1,48 @@
+name: swarmsim
+
+services:
+  sim:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.sim
+    image: swarmsim/sim:local
+    environment:
+      # 1 (default): Gazebo GUI, requires X11/Wayland passthrough — see the README's
+      # "GPU and headless mode" section. 0: headless server, no GPU/display needed.
+      - HEADLESS=${HEADLESS:-1}
+      - DISPLAY=${DISPLAY:-}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    devices:
+      - /dev/dri:/dev/dri
+    ports:
+      # rosbridge WebSocket — what SwarmApi.Infrastructure's RosBridgeSwarmStateProvider
+      # connects to (RosBridge__Url=ws://localhost:9090 from the host).
+      - "9090:9090"
+      # PX4 MAVLink consoles / QGroundControl, one range per potential drone instance
+      # (M1: up to 5). commander takeoff (M0) is run inside the container's console.
+      - "14550-14559:14550-14559/udp"
+    networks:
+      - swarmsim-net
+
+  api:
+    build:
+      context: ../backend
+      dockerfile: ../docker/Dockerfile.api
+    image: swarmsim/api:local
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      # Container-to-container DNS name; unset entirely (or unreachable) and the API
+      # degrades to the in-memory simulated provider instead of failing to start — see
+      # docs/adr/0003-rosbridge-degrade-pattern.md.
+      - RosBridge__Url=ws://sim:9090
+    ports:
+      - "8080:8080"
+    depends_on:
+      - sim
+    networks:
+      - swarmsim-net
+
+networks:
+  swarmsim-net:
+    driver: bridge

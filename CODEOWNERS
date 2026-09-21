@@ -1,0 +1,11 @@
+# Security-relevant and cross-cutting paths get an explicit reviewer instead of
+# merging on whoever happens to approve. See architecture-standards REPO-BASELINE.md §1.
+
+* @konradcinkusz
+
+/.github/                    @konradcinkusz
+/docker/                     @konradcinkusz
+/backend/src/SwarmApi.Infrastructure/ @konradcinkusz
+/docs/architecture/          @konradcinkusz
+/docs/adr/                   @konradcinkusz
+.gitleaks.toml                @konradcinkusz

@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+#
+# SwarmApi.Api — multi-stage per architecture-standards P6. Build context is
+# `backend/` (see docker-compose.yml's `api` service), so all paths below are
+# relative to that directory.
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+
+# Central package management files + every csproj first, so `dotnet restore` is
+# cached across builds and a source-only change never invalidates it.
+COPY Directory.Build.props Directory.Packages.props ./
+COPY src/SwarmApi.Domain/*.csproj src/SwarmApi.Domain/
+COPY src/SwarmApi.Application/*.csproj src/SwarmApi.Application/
+COPY src/SwarmApi.Infrastructure/*.csproj src/SwarmApi.Infrastructure/
+COPY src/SwarmApi.ServiceDefaults/*.csproj src/SwarmApi.ServiceDefaults/
+COPY src/SwarmApi.Api/*.csproj src/SwarmApi.Api/
+RUN dotnet restore src/SwarmApi.Api/SwarmApi.Api.csproj
+
+COPY src/ src/
+RUN dotnet publish src/SwarmApi.Api/SwarmApi.Api.csproj \
+        -c Release \
+        -o /app \
+        --no-restore
+
+# ---------------------------------------------------------------------------
+# Runtime image major version equals the TFM major version (net8.0 -> aspnet:8.0).
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+WORKDIR /app
+
+COPY --from=build /app .
+
+ENV ASPNETCORE_URLS=http://+:8080
+EXPOSE 8080
+
+LABEL org.opencontainers.image.source="https://github.com/konradcinkusz/swarmsim"
+LABEL org.opencontainers.image.description="SwarmApi — mission definition and swarm-state REST API"
+
+# The aspnet base image ships a non-root `app` user (uid 64198) since .NET 8.
+USER app
+
+ENTRYPOINT ["dotnet", "SwarmApi.Api.dll"]

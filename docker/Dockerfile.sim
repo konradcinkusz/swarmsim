@@ -1,0 +1,87 @@
+# syntax=docker/dockerfile:1
+#
+# swarmsim simulation image: ROS 2 Humble + PX4 SITL + Gazebo Harmonic.
+#
+# Not built in CI — see ../docs/adr/0004-ci-scope-for-simulation-stack.md for why
+# (long source build, needs hosts this repo's CI does not have access to, GPU needed
+# for the GUI acceptance criterion). hadolint lints this file in CI instead.
+#
+# Two stages exist for layer hygiene (build tools vs. runtime packages), not to slim a
+# final binary out of a source tree: PX4 SITL runs *from* its checked-out source tree
+# (Python/jinja airframe templates, ROMFS, the `build/` tree `make` produces) rather
+# than shipping as a single compiled binary, so the runtime stage still carries the
+# full PX4-Autopilot checkout by necessity.
+
+ARG PX4_VERSION=v1.15.0
+
+# ---------------------------------------------------------------------------
+FROM ros:humble-ros-base AS builder
+
+ARG PX4_VERSION
+ARG DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt
+# --depth 1 on the tag, not a branch: reproducible, and avoids pulling PX4's full
+# multi-year history (large) for a build that only ever needs one commit.
+RUN git clone --branch "${PX4_VERSION}" --recursive --depth 1 \
+        https://github.com/PX4/PX4-Autopilot.git PX4-Autopilot
+
+WORKDIR /opt/PX4-Autopilot
+# PX4's own dependency installer: toolchain, Python deps, and — on Ubuntu 22.04 — the
+# matching Gazebo Harmonic release from packages.osrfoundation.org. This is the single
+# source of truth for "which apt packages PX4 needs", which is why DL3008 (pin apt
+# versions) is suppressed repo-wide for this file rather than hand-duplicated here
+# (see ../.hadolint.yaml).
+RUN ./Tools/setup/ubuntu.sh --no-nuttx \
+    && rm -rf /var/lib/apt/lists/*
+
+# Compiles px4_sitl against the Gazebo (gz) x500 target — the exact target the README's
+# M0 walkthrough runs by hand (`make px4_sitl gz_x500`), pre-built here so the container
+# starts in seconds instead of recompiling on every `docker compose up`.
+RUN make px4_sitl_default gz_x500
+
+# ---------------------------------------------------------------------------
+FROM ros:humble-ros-base
+
+ARG DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git \
+        ca-certificates \
+        ros-humble-rosbridge-suite \
+        libgl1 \
+        libgl1-mesa-dri \
+        mesa-utils \
+        tmux \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/PX4-Autopilot /opt/PX4-Autopilot
+# The runtime stage needs the Gazebo *runtime* libraries the builder stage's compiler
+# toolchain does not pull in on its own; re-running the same installer here is what
+# actually gets `gz sim` on PATH in this stage rather than assuming it copied over.
+WORKDIR /opt/PX4-Autopilot
+RUN ./Tools/setup/ubuntu.sh --no-nuttx \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY simulation/worlds /opt/swarmsim/worlds
+COPY simulation/px4-configs /opt/swarmsim/px4-configs
+COPY docker/entrypoint.sh /opt/swarmsim/entrypoint.sh
+RUN chmod +x /opt/swarmsim/entrypoint.sh
+
+ENV HEADLESS=0
+
+LABEL org.opencontainers.image.source="https://github.com/konradcinkusz/swarmsim"
+LABEL org.opencontainers.image.description="ROS 2 Humble + PX4 SITL + Gazebo Harmonic simulation environment for swarmsim"
+
+EXPOSE 9090
+
+ENTRYPOINT ["/opt/swarmsim/entrypoint.sh"]

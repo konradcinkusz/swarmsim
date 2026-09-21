@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>SwarmApi.Api</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SwarmApi.Domain\SwarmApi.Domain.csproj" />
+    <ProjectReference Include="..\SwarmApi.Application\SwarmApi.Application.csproj" />
+    <ProjectReference Include="..\SwarmApi.Infrastructure\SwarmApi.Infrastructure.csproj" />
+    <ProjectReference Include="..\SwarmApi.ServiceDefaults\SwarmApi.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+</Project>

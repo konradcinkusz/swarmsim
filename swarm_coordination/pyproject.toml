@@ -1,0 +1,17 @@
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = ["build", "install", "log"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# rclpy/mavros_msgs are not installed outside a ROS 2 workspace (see README); CI lints
+# and unit-tests the pure-logic modules only (conftest.py / pyproject.toml testpaths),
+# so unresolved imports in nodes/ are expected here, not a defect ruff should flag.
+ignore = ["F401"]
+
+[tool.ruff.lint.per-file-ignores]
+"nodes/*.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
