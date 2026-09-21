@@ -1,0 +1,15 @@
+# hadolint config — CI job `docker-lint` in .github/workflows/ci.yml
+#
+# failure-threshold error: style/best-practice *warnings* (DL3059 "multiple
+# consecutive RUN", DL3015 nuances, etc.) are reported but do not fail the build;
+# genuine errors (missing tag, invalid instruction, shell injection shape) do.
+failure-threshold: error
+
+ignored:
+  # DL3008 "Pin versions in apt-get install" — deliberately not applied to
+  # ROS 2/Gazebo/PX4 build-dependency packages: those are resolved against the
+  # ROS distro's own apt snapshot (already an implicit pin per Ubuntu release +
+  # ROS distro), and hand-pinning ~40 transitive package versions here would drift
+  # out of sync with upstream's own `Tools/setup/ubuntu.sh` on every PX4 bump.
+  # The actual reproducibility pin is PX4_VERSION (a git tag) and the base image tag.
+  - DL3008
