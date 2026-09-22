@@ -41,7 +41,9 @@ reasoning; check there before assuming a gap is accidental.
   `offboard.py`, `mission_planning.py`, `swarm_state.py`, `frames.py`, `formation.py`,
   ...) so it stays testable without a ROS 2 install. `test/fake_ros.py` stands in for
   `rclpy` when a test needs to drive a node. Missions and state are in the shared world
-  frame; only the controller node converts to a drone's local frame (`frames.py`).
+  frame; only the controller node converts to a drone's local frame (`frames.py`:
+  spawn offset horizontally, PX4's home vertically). A new MAVROS topic or service needs
+  its plugin in `px4_config.MAVROS_PLUGINS`, or MAVROS never serves it.
 - Changing a message that crosses rosbridge (`/swarm/mission`, `/swarm/command`,
   `/swarm/state`): change `contracts/rosbridge/` first — schema and example — then both
   sides (`RosBridgeProtocol.cs`, `mission_planning.py` / `swarm_state.py`). Both test

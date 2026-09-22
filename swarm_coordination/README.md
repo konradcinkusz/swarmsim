@@ -13,7 +13,7 @@ swarm_coordination/
 ├── trajectory.py        # Vector3, step_towards — pure math
 ├── waypoints.py         # WaypointQueue — advance/step over a route
 ├── formation.py         # line/V offsets, follower targets, collision check
-├── frames.py            # world ↔ a drone's local frame (its spawn offset)
+├── frames.py            # world ↔ a drone's local frame (spawn offset, home height)
 ├── px4_config.py        # reads simulation/px4-configs: namespace, MAVLink URL, spawn pose
 ├── offboard.py          # OffboardSequencer: stream setpoints, then OFFBOARD, then arm
 ├── commands.py          # rtl/land/hold → the PX4 flight mode that carries it out
@@ -57,11 +57,20 @@ checks what they publish and which MAVROS services they call. See `conftest.py` 
    when every assigned drone has finished its task and disarmed.
 
 **Frames.** PX4 reports each drone's position relative to where it spawned, so five
-drones on five pads all report "(0, 0, 0)" before takeoff. Everything crossing the
-package boundary — missions in, state out — is in the shared world frame (ENU, metres,
-the Gazebo world's origin); `frames.py` converts with each drone's spawn offset, which
-`px4_config.py` reads from the same `drone_<n>.env` files `docker/entrypoint.sh`
-spawned the drone from.
+drones on five pads all report roughly "(0, 0, …)" before takeoff. Everything crossing
+the package boundary — missions in, state out — is in the shared world frame (ENU,
+metres, the Gazebo world's origin); `frames.py` converts with each drone's spawn offset,
+which `px4_config.py` reads from the same `drone_<n>.env` files `docker/entrypoint.sh`
+spawned the drone from. Heights are measured from PX4's **home**
+(`mavros/home_position/home`), not from the local origin: PX4 fixes the origin's
+altitude from whatever height its estimator had reached at the first GNSS fix, and in
+the SITL smoke that put drones standing on their pads up to 2.6 m off. PX4 re-takes
+home on the ground and at every arming, so a world height is the height above the pad.
+
+**MAVROS plugins.** Each drone's MAVROS loads only the plugins the nodes use
+(`px4_config.MAVROS_PLUGINS`, passed as an allowlist by the launch file); a test checks
+every `mavros/...` name in `nodes/` against that table, because a topic whose plugin is
+not loaded is simply never published.
 
 ## Running it
 

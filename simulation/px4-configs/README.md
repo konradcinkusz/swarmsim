@@ -19,18 +19,22 @@ How PX4 (v1.15, the version `docker/Dockerfile.sim` pins) consumes each variable
 | `PX4_SIM_MODEL` | `init.d-posix/rcS` | `gz_x500` selects airframe `4001_gz_x500` by file name |
 | `PX4_GZ_WORLD` | `px4-rc.simulator` → `gz_bridge -w` | The world every instance joins; must equal the `<world name>` and the file name in `simulation/worlds/` |
 | `PX4_INSTANCE` | `px4 -i` | Working directory `rootfs/<instance>`, `MAV_SYS_ID = instance + 1`, offboard MAVLink on UDP `14580+instance` → `14540+instance` |
-| `PX4_GZ_MODEL_POSE` | `gz_bridge -p` | Spawn pose `x,y,z,roll,pitch,yaw` in the world frame — and therefore the origin of that drone's local frame |
+| `PX4_GZ_MODEL_POSE` | `gz_bridge -p` | Spawn pose `x,y,z,roll,pitch,yaw` in the world frame — and therefore, horizontally, the origin of that drone's local frame (gz_bridge lifts a `z <= 0` spawn to 0.5 m and lets the model drop onto the ground) |
 | `ROS_NAMESPACE` | `docker/entrypoint.sh` | The tmux session name, and the namespace the ROS 2 side uses for this drone |
 
-### Why the barometer is the height reference
+### Heights, and why the barometer is the height reference
 
-PX4 v1.15 defaults `EKF2_HGT_REF` to GNSS. The local frame's zero height is then taken
-from the GNSS altitude when the first fix passes the estimator's checks, and in the SITL
-smoke, drones standing on their pads still read between -1.9 m and +2.6 m after four
-minutes. Every altitude in this repository — mission waypoints, the smoke test's
-checks, `frames.py`'s world ↔ local conversion — assumes a drone's local zero is its
-pad. With the barometer as the reference it is the height the drone booted at, which
-is its pad; GNSS height is still fused, with its offset estimated as a bias.
+A drone's local zero height is **not** its pad. PX4 fixes the local origin's altitude
+from whatever height its estimator had reached when the first GNSS fix passed its checks
+(EKF2 `collect_gps`), and in the SITL smoke, drones standing on their pads read from
+-1.9 m to +2.6 m — with either height reference. So the swarm measures heights from
+PX4's **home**, which PX4 records on the ground at boot, again whenever the estimate has
+drifted while the drone rests, and at every arming (`swarm_coordination/frames.py`).
+
+`px4-rc.params` still sets `EKF2_HGT_REF` to the barometer, for a steadier height in
+simulation: the model's pressure sensor carries 0.01 Pa of noise, while
+`sensor_gps_sim` adds 0.5 m of white noise to every GNSS altitude sample. GNSS height is
+still fused, with its offset estimated as a bias.
 
 There is no `MAV_SYS_ID` variable on purpose: PX4 derives it from the instance index, so a
 value here could only disagree with it.

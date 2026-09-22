@@ -1,8 +1,14 @@
+import re
 from pathlib import Path
 
 import pytest
 
-from swarm_coordination.px4_config import load_drone_configs, parse_env, spawn_offsets
+from swarm_coordination.px4_config import (
+    MAVROS_PLUGINS,
+    load_drone_configs,
+    parse_env,
+    spawn_offsets,
+)
 from swarm_coordination.trajectory import Vector3
 
 REPO_CONFIGS = Path(__file__).resolve().parents[2] / "simulation" / "px4-configs"
@@ -57,3 +63,16 @@ def test_a_config_missing_a_variable_names_it(tmp_path):
 def test_no_configs_at_all_is_an_error(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_drone_configs(tmp_path)
+
+
+def test_every_mavros_name_the_nodes_use_comes_from_a_loaded_plugin():
+    nodes = Path(__file__).resolve().parents[1] / "swarm_coordination" / "nodes"
+    used = {
+        name
+        for source in nodes.glob("*.py")
+        for name in re.findall(r"mavros/[a-z_]+(?:/[a-z_]+)*", source.read_text())
+    }
+    provided = {name for names in MAVROS_PLUGINS.values() for name in names}
+
+    assert used, "the node sources name no MAVROS topic at all: the scan is broken"
+    assert used <= provided, f"no loaded MAVROS plugin serves {sorted(used - provided)}"

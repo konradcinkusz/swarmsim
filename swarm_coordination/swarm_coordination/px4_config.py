@@ -17,6 +17,21 @@ from .trajectory import Vector3
 
 _LINE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
 
+# The MAVROS plugins each drone's bridge loads, and what each gives the nodes. Left to
+# itself MAVROS loads every plugin it ships — parameter and mission sync on connect, IMU
+# and GPS streams — on every drone, and with three drones, PX4, Gazebo and MAVROS on a
+# 4-CPU runner, MAVROS's time-sync round trip reached 1.3 s. A topic or service used
+# without its plugin is never served and fails silently, so test_px4_config.py checks
+# every MAVROS name the nodes use against this table.
+MAVROS_PLUGINS: dict[str, tuple[str, ...]] = {
+    "sys_status": ("mavros/state", "mavros/battery", "mavros/set_mode"),
+    "command": ("mavros/cmd/arming",),
+    "local_position": ("mavros/local_position/pose",),
+    "setpoint_position": ("mavros/setpoint_position/local",),
+    "home_position": ("mavros/home_position/home",),
+    "sys_time": (),  # keeps MAVROS's clock in step with PX4's
+}
+
 
 @dataclass(frozen=True)
 class DroneConfig:

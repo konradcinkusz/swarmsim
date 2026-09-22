@@ -2,7 +2,8 @@
 
 One instance per drone, in that drone's namespace (see `launch/spawn_swarm.launch.py`).
 It converts between the drone's own local frame (what MAVROS speaks) and the shared world
-frame (what missions and the swarm state use) with the drone's spawn offset, feeds MAVROS
+frame (what missions and the swarm state use) with the drone's spawn offset and its home
+height (`frames.py` says why heights are measured from home), feeds MAVROS
 readings to the controller, and carries out what the controller decides: publish a
 setpoint, ask PX4 for a mode, ask it to arm. Every decision is in the rclpy-free
 `drone_controller.py` / `offboard.py`, unit tested without ROS.
@@ -10,6 +11,7 @@ setpoint, ask PX4 for a mode, ask it to arm. Every decision is in the rclpy-free
 Topics, relative to the drone's namespace (e.g. /drone_2):
   in   mavros/local_position/pose  PoseStamped, local ENU
        mavros/state                mavros_msgs/State
+       mavros/home_position/home   mavros_msgs/HomePosition, local ENU (latched)
        mission/assignment          String JSON {"mission_id", "waypoints": [[x, y, z], ...]} (world)
        mission/slot                String JSON {"mission_id", "leader", "offset": [x, y, z]} (world)
        mission/command             String "rtl" | "land" | "hold"
@@ -25,10 +27,10 @@ import json
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
-from mavros_msgs.msg import State
+from mavros_msgs.msg import HomePosition, State
 from mavros_msgs.srv import CommandBool, SetMode
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from std_msgs.msg import String
 
 from ..drone_controller import DroneController
@@ -36,6 +38,11 @@ from ..frames import local_to_world, world_to_local
 from ..trajectory import Vector3
 
 CONTROL_RATE_HZ = 10.0
+# MAVROS publishes home latched (reliable, transient local): subscribing the same way
+# delivers the last home at once instead of waiting for PX4 to send it again.
+HOME_QOS = QoSProfile(
+    depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE
+)
 
 
 def _vector(msg: PoseStamped) -> Vector3:
@@ -78,6 +85,7 @@ class DroneControllerNode(Node):
         )
 
         self._position: Vector3 | None = None
+        self._home_height: float | None = None  # local z of PX4's home; None until reported
         self._armed: bool | None = None
         self._mode: str | None = None
         self._leader: str | None = None
@@ -96,6 +104,7 @@ class DroneControllerNode(Node):
             PoseStamped, "mavros/local_position/pose", self._on_local_pose, qos_profile_sensor_data
         )
         self.create_subscription(State, "mavros/state", self._on_state, qos_profile_sensor_data)
+        self.create_subscription(HomePosition, "mavros/home_position/home", self._on_home, HOME_QOS)
         self.create_subscription(String, "mission/assignment", self._on_assignment, 10)
         self.create_subscription(String, "mission/slot", self._on_slot, 10)
         self.create_subscription(String, "mission/command", self._on_command, 10)
@@ -112,8 +121,15 @@ class DroneControllerNode(Node):
     # --- MAVROS readings ---------------------------------------------------------------
 
     def _on_local_pose(self, msg: PoseStamped) -> None:
-        self._position = local_to_world(_vector(msg), self._spawn)
+        self._position = local_to_world(_vector(msg), self._spawn, self._home_height or 0.0)
         self._world_pose_pub.publish(_pose(self._position, "world", msg.header.stamp))
+
+    def _on_home(self, msg: HomePosition) -> None:
+        if self._home_height is None:
+            self.get_logger().info(
+                f"home at local height {msg.position.z:.2f} m; heights are measured from it"
+            )
+        self._home_height = float(msg.position.z)
 
     def _on_state(self, msg: State) -> None:
         self._armed = bool(msg.armed)
@@ -191,7 +207,7 @@ class DroneControllerNode(Node):
             now.nanoseconds * 1e-9, self._position, self._armed, self._mode, self._leader_position
         )
         if out.setpoint is not None:
-            local = world_to_local(out.setpoint, self._spawn)
+            local = world_to_local(out.setpoint, self._spawn, self._home_height or 0.0)
             self._setpoint_pub.publish(_pose(local, "map", now.to_msg()))
         if out.request_mode is not None and self._mode_client.service_is_ready():
             request = SetMode.Request()

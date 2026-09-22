@@ -201,6 +201,12 @@ class State:
         self.connected = True
 
 
+class HomePosition:
+    def __init__(self, x=0.0, y=0.0, z=0.0):
+        self.header = SimpleNamespace(stamp=None, frame_id="")
+        self.position = SimpleNamespace(x=x, y=y, z=z)
+
+
 class BatteryState:
     def __init__(self, percentage=float("nan")):
         self.percentage = percentage
@@ -248,7 +254,7 @@ def install() -> Bus:
     )
     module("std_msgs"), module("std_msgs.msg", String=String)
     module("geometry_msgs"), module("geometry_msgs.msg", PoseStamped=PoseStamped)
-    module("mavros_msgs"), module("mavros_msgs.msg", State=State)
+    module("mavros_msgs"), module("mavros_msgs.msg", State=State, HomePosition=HomePosition)
     module("mavros_msgs.srv", SetMode=SetMode, CommandBool=CommandBool)
     module("sensor_msgs"), module("sensor_msgs.msg", BatteryState=BatteryState)
     for name in list(sys.modules):

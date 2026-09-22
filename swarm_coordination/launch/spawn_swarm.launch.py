@@ -27,7 +27,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from launch import LaunchDescription
-from swarm_coordination.px4_config import load_drone_configs
+from swarm_coordination.px4_config import MAVROS_PLUGINS, load_drone_configs
 
 DEFAULT_CONFIG_DIR = os.environ.get("SWARMSIM_PX4_CONFIG_DIR", "/opt/swarmsim/px4-configs")
 
@@ -74,6 +74,10 @@ def _launch_setup(context, *args, **kwargs):
                             "tgt_system": config.system_id,
                             "tgt_component": 1,
                             "fcu_protocol": "v2.0",
+                            # Only the plugins the nodes use (px4_config.MAVROS_PLUGINS):
+                            # MAVROS loads a denied plugin only if the allowlist names it.
+                            "plugin_denylist": ["*"],
+                            "plugin_allowlist": sorted(MAVROS_PLUGINS),
                         },
                     ],
                 )

@@ -116,6 +116,25 @@ def test_the_controller_publishes_its_world_pose_by_adding_the_spawn_offset(bus)
     assert (world.x, world.y, world.z) == (1.0, 3.0, 2.0)
 
 
+def test_heights_are_measured_from_home_once_px4_reports_it(bus):
+    node = _controller(bus)
+
+    # On its pad, but 2.49 m above the local origin PX4 chose (the SITL smoke's drone_1).
+    bus.publish("/drone_2/mavros/home_position/home", fake_ros.HomePosition(z=2.66))
+    bus.publish("/drone_2/mavros/local_position/pose", fake_ros.pose(0.0, 0.0, 2.49))
+    bus.publish(
+        "/drone_2/mission/assignment",
+        fake_ros.String(json.dumps({"mission_id": MISSION, "waypoints": [[0.0, 3.0, 5.0]]})),
+    )
+    bus.advance(0.1)
+    fake_ros.fire(node, period=0.1)
+
+    world = bus.messages("/drone_2/world_pose")[-1].pose.position
+    setpoint = bus.messages("/drone_2/mavros/setpoint_position/local")[0].pose.position
+    assert world.z == pytest.approx(-0.17)  # on the ground, not 2.49 m up
+    assert setpoint.z == pytest.approx(2.66 - 0.17 + 2.0)  # 2 m carrot above where it is
+
+
 def test_the_controller_flies_a_world_frame_path_with_local_frame_setpoints(bus):
     node = _controller(bus)
     bus.publish("/drone_2/mavros/local_position/pose", fake_ros.pose(0.0, 0.0, 0.0))

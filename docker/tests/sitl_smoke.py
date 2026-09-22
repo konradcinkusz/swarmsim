@@ -23,6 +23,11 @@ import urllib.request
 from datetime import datetime, timezone
 
 SPAWN_SPACING_M = 3.0  # simulation/px4-configs: drone_n spawns at (0, 3 * (n - 1), 0)
+# "On the ground" in the world frame. Heights are measured from PX4's home
+# (swarm_coordination/frames.py), which PX4 re-takes whenever a resting drone's estimate
+# has drifted more than twice its vertical accuracy (about 0.5 m here) — so a drone on
+# the ground reads within about half a metre of 0, and 1 m leaves room for that.
+GROUND_TOLERANCE_M = 1.0
 results: list[tuple[str, str, str]] = []
 
 
@@ -99,15 +104,14 @@ def run(api: str, drones: int) -> None:
         p = drone["position"]
         return ((p["x"]) ** 2 + (p["y"] - index * SPAWN_SPACING_M) ** 2) ** 0.5, abs(p["z"])
 
-    # A drone's first reports come before PX4's estimator has converged: the first SITL run
-    # read drone_1 at z = 3.42 m while it sat on its pad. Wait for every drone to settle —
-    # a frame that is not being converted never does, and times out with where they are.
-    # A height that never settles is the estimator's height reference, not a frame:
-    # simulation/px4-configs/px4-rc.params sets it to the barometer for that reason.
+    # A drone's first reports come before PX4's estimator has converged and before PX4 has
+    # reported home: the second SITL run read drone_1 at z = 3.42 m while it sat on its pad.
+    # Wait for every drone to settle — a frame that is not being converted never does, and
+    # times out with where they are and what PX4 said about them.
     def all_on_pads():
         current = state(api)
         settled = all(
-            horizontal < 1.0 and vertical < 0.5
+            horizontal < 1.0 and vertical < GROUND_TOLERANCE_M
             for horizontal, vertical in (pad_error(i, d) for i, d in enumerate(by_id(current)))
         )
         seen = {
@@ -161,7 +165,7 @@ def run(api: str, drones: int) -> None:
         record(
             f"{drone['id']} landed at the end of its lane (10, {target_y:.0f})",
             f"({p['x']:.2f}, {p['y']:.2f}, {p['z']:.2f}), status {drone['status']}",
-            "ok" if error < 1.5 and p["z"] < 0.5 else "FAIL",
+            "ok" if error < 1.5 and p["z"] < GROUND_TOLERANCE_M else "FAIL",
         )
     record("mission flight time", f"{flight_s:.1f} s", "info")
 
@@ -191,7 +195,9 @@ def run(api: str, drones: int) -> None:
 
     def landed():
         current = state(api)
-        return all(d["position"]["z"] < 0.5 and d["status"] == "Landed" for d in current["drones"]), current
+        on_ground = (d["position"]["z"] < GROUND_TOLERANCE_M for d in current["drones"])
+        landed = all(d["status"] == "Landed" for d in current["drones"])
+        return all(on_ground) and landed, current
 
     wait_for("every drone landed and disarmed after the abort", 240, landed, 1.0)
 
