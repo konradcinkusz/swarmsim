@@ -90,15 +90,36 @@ def run(api: str, drones: int) -> None:
         current = state(api)
         return len(current["drones"]) == drones, current
 
-    current, _ = wait_for(f"{drones} drones in /api/swarm/state", 300, all_reporting, 2.0)
-    for index, drone in enumerate(sorted(current["drones"], key=lambda d: int(d["id"].split("_")[1]))):
-        pad_y = index * SPAWN_SPACING_M
+    wait_for(f"{drones} drones in /api/swarm/state", 300, all_reporting, 2.0)
+
+    def by_id(current):
+        return sorted(current["drones"], key=lambda d: int(d["id"].split("_")[1]))
+
+    def pad_error(index, drone):
         p = drone["position"]
-        error = ((p["x"]) ** 2 + (p["y"] - pad_y) ** 2) ** 0.5
-        verdict = "ok" if error < 1.0 and abs(p["z"]) < 1.0 else "FAIL"
-        record(f"{drone['id']} on its pad (0, {pad_y:.0f})", f"({p['x']:.2f}, {p['y']:.2f}, {p['z']:.2f})", verdict)
-        if verdict == "FAIL":
-            raise SmokeFailure(f"{drone['id']} is not on its pad: frames are not being converted")
+        return ((p["x"]) ** 2 + (p["y"] - index * SPAWN_SPACING_M) ** 2) ** 0.5, abs(p["z"])
+
+    # A drone's first reports come before PX4's estimator has converged: the first SITL run
+    # read drone_1 at z = 3.42 m while it sat on its pad. Wait for every drone to settle —
+    # a frame that is not being converted never does, and times out with where they are.
+    def all_on_pads():
+        current = state(api)
+        settled = all(
+            horizontal < 1.0 and vertical < 0.5
+            for horizontal, vertical in (pad_error(i, d) for i, d in enumerate(by_id(current)))
+        )
+        positions = {d["id"]: d["position"] for d in current["drones"]}
+        return settled, positions
+
+    try:
+        _, settle_s = wait_for("every drone settled on its own pad", 240, all_on_pads, 2.0)
+    except SmokeFailure as failure:
+        raise SmokeFailure(f"drones never settled on their pads (frames, or the estimator): {failure}") from None
+    current = state(api)
+    for index, drone in enumerate(by_id(current)):
+        p = drone["position"]
+        record(f"{drone['id']} on its pad (0, {index * SPAWN_SPACING_M:.0f})", f"({p['x']:.2f}, {p['y']:.2f}, {p['z']:.2f})", "ok")
+    record("time for the estimators to settle", f"{settle_s:.1f} s", "info")
 
     print("3. M0/M3: a waypoint mission takes off, flies, lands and completes")
     mission = {
