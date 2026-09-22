@@ -40,3 +40,25 @@ def test_rejects_non_positive_drone_count():
 def test_single_drone_waypoint_mode_has_no_lane_offset():
     plan = plan_swarm_waypoints("waypoint", BASE, drone_count=1, spacing_m=2.0)
     assert plan["drone_1"] == BASE
+
+
+def test_plan_mission_gives_waypoint_drones_lanes_and_no_followers():
+    from swarm_coordination.mission_planning import MissionMessage, plan_mission
+
+    mission = MissionMessage("m", "waypoint", "line", BASE, drone_count=2, spacing_m=3.0)
+    plan = plan_mission(mission)
+
+    assert plan.followers == {}
+    assert plan.paths["drone_2"] == [Vector3(0.0, 3.0, 5.0), Vector3(10.0, 3.0, 5.0)]
+
+
+def test_plan_mission_puts_line_followers_behind_the_leader():
+    from swarm_coordination.mission_planning import MissionMessage, plan_mission
+
+    mission = MissionMessage("m", "formation", "line", BASE, drone_count=3, spacing_m=2.0)
+    plan = plan_mission(mission)
+
+    assert plan.followers == {
+        "drone_2": ("drone_1", Vector3(-2.0, 0.0, 0.0)),
+        "drone_3": ("drone_1", Vector3(-4.0, 0.0, 0.0)),
+    }

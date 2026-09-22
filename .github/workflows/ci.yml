@@ -64,8 +64,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      # jsonschema is test-only: the contract tests validate against contracts/rosbridge/
+      # and skip without it, which CI must never do.
       - name: Install dependencies
-        run: pip install ruff pytest
+        run: pip install ruff pytest jsonschema
 
       - name: ruff check
         run: ruff check .
@@ -140,6 +142,7 @@ jobs:
       - name: PX4 drone configs are present
         run: |
           test -f simulation/px4-configs/x500_common.env
+          test -f simulation/px4-configs/px4-rc.params
           ls simulation/px4-configs/drone_*.env
           for world in simulation/worlds/*.sdf; do
             name=$(sed -n 's/.*<world name="\([^"]*\)".*/\1/p' "$world")
@@ -149,7 +152,9 @@ jobs:
 
       - name: Shell scripts (shellcheck) and entrypoint logic (stubbed)
         run: |
-          shellcheck docker/entrypoint.sh docker/tests/test_entrypoint.sh scripts/*.sh scripts/hooks/pre-commit
+          shellcheck docker/entrypoint.sh docker/tests/test_entrypoint.sh docker/tests/px4_state.sh \
+            scripts/*.sh scripts/hooks/pre-commit
+          shellcheck -s sh simulation/px4-configs/px4-rc.params
           bash docker/tests/test_entrypoint.sh
 
   docs:

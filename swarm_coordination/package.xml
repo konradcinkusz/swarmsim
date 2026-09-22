@@ -5,8 +5,8 @@
   <version>0.1.0</version>
   <description>
     Waypoint-following and leader-follower formation coordination for a multi-drone
-    (PX4 SITL + Gazebo) swarm. Pure trajectory/formation math is ROS-free and unit
-    tested; ROS 2 nodes are thin MAVROS adapters over it.
+    (PX4 SITL + Gazebo) swarm. Every decision (offboard sequencing, frames, missions,
+    swarm state) is ROS-free and unit tested; the ROS 2 nodes are thin MAVROS adapters.
   </description>
   <maintainer email="konradcinkusz@gmail.com">Konrad Cinkusz</maintainer>
   <license>MIT</license>
@@ -16,7 +16,13 @@
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
   <depend>mavros_msgs</depend>
+  <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>mavros</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

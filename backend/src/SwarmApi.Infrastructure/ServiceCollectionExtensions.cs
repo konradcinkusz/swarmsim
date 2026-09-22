@@ -1,7 +1,8 @@
-using System.Net.WebSockets;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using SwarmApi.Application;
@@ -12,50 +13,47 @@ namespace SwarmApi.Infrastructure;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers <see cref="ISwarmBridge"/>: probes <c>RosBridge:Url</c> with a short
-    /// timeout and registers <see cref="RosBridgeSwarmBridge"/> on success, or
-    /// <see cref="SimulatedSwarmBridge"/> otherwise (P8). This is the one place that
-    /// decision is made — see docs/adr/0003-rosbridge-degrade-pattern.md.
+    /// Registers <see cref="ISwarmBridge"/> from configuration alone (P8, docs/adr/0003 and
+    /// its 2026-09-22 amendment): a <c>ws://</c>/<c>wss://</c> <c>RosBridge:Url</c> selects
+    /// <see cref="RosBridgeSwarmBridge"/>, connected and reconnected in the background by
+    /// <see cref="RosBridgeConnectionService"/>; no URL selects <see cref="SimulatedSwarmBridge"/>.
+    /// A configured but unreachable swarm is never replaced by a simulated one — it reports
+    /// Disconnected until it answers, so an operator cannot mistake stand-in drones for real
+    /// ones — and a configured URL that is not a WebSocket URL stops startup for the same
+    /// reason. This is the one place that decision is made.
     /// </summary>
-    public static async Task<IServiceCollection> AddSwarmBridgeAsync(
-        this IServiceCollection services,
-        IConfiguration configuration,
-        ILogger logger,
-        CancellationToken cancellationToken = default)
+    /// <exception cref="InvalidOperationException"><c>RosBridge:Url</c> is set but is not a ws:// or wss:// URL.</exception>
+    public static IServiceCollection AddSwarmBridge(
+        this IServiceCollection services, IConfiguration configuration, ILogger logger)
     {
         var options = configuration.GetSection(RosBridgeOptions.SectionName).Get<RosBridgeOptions>()
             ?? new RosBridgeOptions();
+        services.TryAddSingleton(TimeProvider.System);
 
-        if (!string.IsNullOrWhiteSpace(options.Url) && Uri.TryCreate(options.Url, UriKind.Absolute, out var uri))
+        if (!string.IsNullOrWhiteSpace(options.Url))
         {
-            var socket = new ClientWebSocket();
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(options.ConnectTimeoutSeconds));
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-
-            try
+            if (!Uri.TryCreate(options.Url, UriKind.Absolute, out var uri) || uri.Scheme is not ("ws" or "wss"))
             {
-                await socket.ConnectAsync(uri, linkedCts.Token);
-
-                var bridge = new RosBridgeSwarmBridge(uri, socket);
-                await bridge.StartAsync(cancellationToken);
-
-                services.AddSingleton<ISwarmBridge>(bridge);
-                logger.LogInformation("RosBridge reachable at {Url}; running in Connected mode.", uri);
-                return services;
+                // Falling back to the simulated swarm here would put stand-in drones in front
+                // of an operator who asked for real ones; a typo must fail loudly instead.
+                throw new InvalidOperationException(
+                    $"RosBridge:Url '{options.Url}' is not a ws:// or wss:// URL. Fix it, or unset it to run the simulated swarm.");
             }
-            catch (Exception ex) when (ex is WebSocketException or OperationCanceledException)
-            {
-                socket.Dispose();
-                logger.LogWarning(
-                    ex, "RosBridge unreachable at {Url}; falling back to Simulated mode.", uri);
-            }
-        }
-        else
-        {
-            logger.LogInformation("RosBridge:Url not configured; running in Simulated mode.");
+
+            services.AddSingleton(sp => new RosBridgeSwarmBridge(
+                uri,
+                options,
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<ILogger<RosBridgeSwarmBridge>>()));
+            services.AddSingleton<ISwarmBridge>(sp => sp.GetRequiredService<RosBridgeSwarmBridge>());
+            services.AddHostedService<RosBridgeConnectionService>();
+            logger.LogInformation(
+                "RosBridge:Url is {Url}: connecting in the background; /health reports Connected or Disconnected.", uri);
+            return services;
         }
 
-        services.AddSingleton<ISwarmBridge, SimulatedSwarmBridge>();
+        logger.LogInformation("RosBridge:Url not configured; running in Simulated mode.");
+        services.AddSingleton<ISwarmBridge>(sp => new SimulatedSwarmBridge(sp.GetRequiredService<TimeProvider>()));
         return services;
     }
 
@@ -70,10 +68,9 @@ public static class ServiceCollectionExtensions
     /// `IAuthenticationSchemeProvider` to be registered regardless of mode — hence the
     /// parameterless `AddAuthentication()` call below in Open mode: no scheme, so
     /// nothing to actually authenticate against, but the middleware has something to
-    /// activate. This is the one place the mode decision is made — see
-    /// docs/adr/0005-mcp-server-and-bearer-auth.md. Callers read the resolved
-    /// <see cref="AuthStatus"/> (DI singleton) to decide which endpoints to gate; this
-    /// method never touches routing itself.
+    /// activate. In Enforced mode a fallback authorization policy makes every endpoint
+    /// require a token unless it is explicitly AllowAnonymous. This is the one place the
+    /// mode decision is made — see docs/adr/0005-mcp-server-and-bearer-auth.md.
     /// </summary>
     public static IServiceCollection AddSwarmAuthentication(
         this IServiceCollection services, IConfiguration configuration, ILogger logger)
@@ -81,15 +78,22 @@ public static class ServiceCollectionExtensions
         var options = configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>()
             ?? new AuthOptions();
 
-        services.AddAuthorization();
-
         if (string.IsNullOrWhiteSpace(options.Authority))
         {
             logger.LogInformation("Auth:Authority not configured; running in Open mode (no authentication).");
+            services.AddAuthorization();
             services.AddAuthentication();
             services.AddSingleton(new AuthStatus(AuthMode.Open));
             return services;
         }
+
+        // Deny by default (architecture-standards SECURITY-REVIEW): once a token authority
+        // exists, every endpoint requires an authenticated caller unless it opts out with
+        // AllowAnonymous. The open list is short and lives next to the endpoints it opens
+        // (health probes, swarm and mission reads — docs/adr/0005); a new endpoint that
+        // forgets to say anything is protected, not exposed.
+        services.AddAuthorization(authorization => authorization.FallbackPolicy =
+            new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme).RequireAuthenticatedUser().Build());
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(bearerOptions =>

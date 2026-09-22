@@ -48,4 +48,20 @@ public class SwarmStateEndpointTests(WebApplicationFactory<Program> factory) : I
         Assert.Empty(state!.Drones);
         Assert.Null(state.ActiveMissionId);
     }
+
+    [Fact]
+    public async Task Land_all_is_accepted_and_ends_the_active_mission()
+    {
+        using var freshFactory = new WebApplicationFactory<Program>();
+        var client = freshFactory.CreateClient();
+        var created = await (await client.PostAsJsonAsync("/api/missions", new CreateMissionRequest(
+                Name: "Land probe", Type: "waypoint", Waypoints: [new WaypointDto(0, 0, 5)], DroneCount: 2)))
+            .Content.ReadFromJsonAsync<Mission>(TestJson.Options);
+
+        var land = await client.PostAsync("/api/swarm/land", content: null);
+        var mission = await client.GetFromJsonAsync<Mission>($"/api/missions/{created!.Id}", TestJson.Options);
+
+        Assert.Equal(HttpStatusCode.Accepted, land.StatusCode);
+        Assert.Equal(MissionStatus.Aborted, mission!.Status);
+    }
 }

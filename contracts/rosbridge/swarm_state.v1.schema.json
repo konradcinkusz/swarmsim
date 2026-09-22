@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/konradcinkusz/swarmsim/contracts/rosbridge/swarm_state.v1.schema.json",
+  "title": "/swarm/state payload (v1)",
+  "description": "The aggregated state of every drone, published by swarm_state_aggregator_node. A value the swarm does not know is null or absent — never a default that looks measured.",
+  "type": "object",
+  "required": ["version", "frame", "drones"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "frame": { "const": "world_enu" },
+    "mission": {
+      "type": ["object", "null"],
+      "required": ["id", "complete"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "complete": { "type": "boolean", "description": "Every drone assigned to this mission has finished its part of it." }
+      }
+    },
+    "drones": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "x", "y", "z"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^drone_[0-9]+$" },
+          "x": { "type": "number" },
+          "y": { "type": "number" },
+          "z": { "type": "number" },
+          "armed": { "type": ["boolean", "null"] },
+          "mode": { "type": ["string", "null"], "description": "PX4 flight mode as MAVROS reports it, e.g. OFFBOARD, AUTO.RTL, AUTO.LAND." },
+          "battery_pct": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+          "age_s": { "type": ["number", "null"], "minimum": 0, "description": "Seconds since this drone's position was last received." },
+          "waypoint_index": { "type": ["integer", "null"], "minimum": 0 },
+          "waypoint_count": { "type": ["integer", "null"], "minimum": 0 }
+        }
+      }
+    }
+  }
+}

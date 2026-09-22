@@ -34,14 +34,19 @@ APIs as the integration point for a future natural-language mission layer. See t
 
 ```
 SwarmApi.Api            → transport only: bind, validate, delegate (P9)
-  SwarmApi.Application   → use-case services (MissionService: dispatch, state query)
+  SwarmApi.Application   → use cases (MissionService: validate, dispatch, abort, land, lifecycle)
     SwarmApi.Domain      → entities, value objects, pure trajectory/formation math
     SwarmApi.Infrastructure → ISwarmBridge: RosBridgeSwarmBridge (real) / SimulatedSwarmBridge (P8 fallback)
 ```
 
 `swarm_coordination` (ROS 2) mirrors the same discipline on the Python side: ROS nodes
-are thin I/O adapters (subscribe/publish only); the waypoint and formation math they call
-lives in plain, `rclpy`-free modules that unit-test without a ROS 2 installation.
+are thin I/O adapters (subscribe/publish, call MAVROS services); every decision they act
+on — OFFBOARD sequencing, frames, mission planning, swarm state — lives in plain,
+`rclpy`-free modules that unit-test without a ROS 2 installation.
+
+The two sides meet at one contract: `contracts/rosbridge/` holds a JSON Schema and an
+example for each rosbridge message (`/swarm/mission`, `/swarm/command`, `/swarm/state`),
+and both test suites are held to the same files (P11).
 
 ## Compliance checklist
 
@@ -65,14 +70,14 @@ Last worked through: 2026-09-22.
 | 7 | All configuration from environment variables; no secret in source, config or comment; secret scanner in CI | Yes | Options bound from `RosBridge__*` / `Auth__*`; gitleaks scans full history in CI (`ci.yml`, job `secret-scan`) and before each commit (`scripts/hooks/pre-commit`, installed by `scripts/setup.sh`) |
 | 8 | Exactly one service holds a signing key; all others validate against its JWKS | Yes | `authservice` signs (RS256); `SwarmApi.Api` only validates through JWKS discovery ([ADR-0005](../adr/0005-mcp-server-and-bearer-auth.md)) |
 | 9 | Shared kernel holds no entity, DTO, enum, seed data or user-facing string — asserted by an architecture test and a CI size check | Yes, partly | `ArchitectureTests` + the kernel size step in `ci.yml`; JWT wiring and OpenAPI are not in the kernel — P2 row |
-| 10 | Every optional integration has a working no-op or fallback | Yes | rosbridge → simulated swarm ([ADR-0003](../adr/0003-rosbridge-degrade-pattern.md)); `authservice` → Open mode ([ADR-0005](../adr/0005-mcp-server-and-bearer-auth.md)) |
-| 11 | Health endpoint reports every optional integration's state; the startup banner prints the same | Deviation, after startup | Both report `swarmBridge` and `auth` at startup; a rosbridge drop afterwards is not reflected — P8 row |
+| 10 | Every optional integration has a working no-op or fallback | Yes | rosbridge not configured → simulated swarm; configured but unreachable → `Disconnected`, writes answer 503 and the bridge keeps reconnecting — never a simulated swarm standing in for a real one ([ADR-0003](../adr/0003-rosbridge-degrade-pattern.md) and its amendments); `authservice` → Open mode ([ADR-0005](../adr/0005-mcp-server-and-bearer-auth.md)) |
+| 11 | Health endpoint reports every optional integration's state; the startup banner prints the same | Yes | `/health` reports `swarmBridge` as it is at that moment (Degraded while `Disconnected`), `lastStateAgeSeconds` and `auth`; the startup log names both modes (`SwarmBridgeHealthCheck`, `ServiceCollectionExtensions`) |
 | 12 | Multi-stage Dockerfile; runtime major = TFM major; listens on `:8080`; non-root | Yes | `docker/Dockerfile.api`: SDK 10 builds `net8.0`, runs on `aspnet:8.0`, `USER app` |
 | 13 | One `fly.toml`; `min_machines_running = 1` if called in-request | Deviation | P7 `swarmsim-api` row (trigger fired) |
-| 14 | Outbound `HttpClient`s carry the standard resilience handler with explicit timeouts | N/A | The API makes no outbound HTTP call; its one outbound connection is the rosbridge WebSocket, which has an explicit connect timeout (`RosBridge:ConnectTimeoutSeconds`) |
+| 14 | Outbound `HttpClient`s carry the standard resilience handler with explicit timeouts | N/A | The API makes no outbound HTTP call; its one outbound connection is the rosbridge WebSocket, which has an explicit connect timeout, a doubling reconnect back-off and a message size cap (`RosBridge:*`) |
 | 15 | `Program.cs` is a manifest; wiring in `ServiceCollectionExtensions` | Yes | `Program.cs` is capability calls; bridge and auth decisions live in `SwarmApi.Infrastructure/ServiceCollectionExtensions.cs` |
 | 16 | Extension points are interfaces registered in DI, not base classes | Yes | `ISwarmBridge` (two implementations, no base class) |
-| 17 | Has a test project; the logic-bearing layer is covered | Yes | `SwarmApi.Domain.Tests`, `SwarmApi.Application.Tests`, `SwarmApi.Api.Tests` (host-level, including Enforced auth) |
+| 17 | Has a test project; the logic-bearing layer is covered | Yes | `SwarmApi.Domain.Tests`, `SwarmApi.Application.Tests` (mission lifecycle), `SwarmApi.Infrastructure.Tests` (the rosbridge protocol against `contracts/rosbridge/`, the bridge against an in-process rosbridge), `SwarmApi.Api.Tests` (host-level, including Enforced auth) |
 | 18 | Built by the tag-driven workflow with path-based change detection | Deviation | P12 row |
 | 19 | Architectural decisions recorded in `docs/` | Yes | Seven ADRs in [`docs/adr/`](https://github.com/konradcinkusz/swarmsim/tree/main/docs/adr), amended in place (dated) when the code moves on |
 

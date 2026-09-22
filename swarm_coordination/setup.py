@@ -26,8 +26,7 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "waypoint_follower_node = swarm_coordination.nodes.waypoint_follower_node:main",
-            "formation_commander_node = swarm_coordination.nodes.formation_commander_node:main",
+            "drone_controller_node = swarm_coordination.nodes.drone_controller_node:main",
             "mission_dispatcher_node = "
             "swarm_coordination.nodes.mission_dispatcher_node:main",
             "swarm_state_aggregator_node = "

@@ -66,4 +66,23 @@ public class FormationTests
 
     public static TheoryData<Vector3> FormationStartingPoints() =>
         new() { new Vector3(0, 0, 5), new Vector3(100, -50, 20), new Vector3(-30, 30, 5) };
+
+    [Fact]
+    public void V_alternates_sides_and_steps_back_one_rank_per_pair()
+    {
+        // The same values swarm_coordination/test/test_formation.py expects from v_formation.
+        var offsets = Formation.V(count: 4, spacingMeters: 2.0);
+
+        Assert.Equal(
+            [new Vector3(-2, 2, 0), new Vector3(-2, -2, 0), new Vector3(-4, 4, 0), new Vector3(-4, -4, 0)],
+            offsets);
+    }
+
+    [Fact]
+    public void Offsets_dispatch_on_the_shape()
+    {
+        Assert.Equal(Formation.Line(3, 1.5), Formation.Offsets(FormationShape.Line, 3, 1.5));
+        Assert.Equal(Formation.V(3, 1.5), Formation.Offsets(FormationShape.V, 3, 1.5));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Formation.V(-1, 1));
+    }
 }

@@ -30,9 +30,18 @@ async function pollState() {
   }
 }
 
+// The three bridge modes (docs/adr/0003): a live swarm, a configured swarm whose
+// connection is down (positions below are the last ones received), or the stand-in.
+const BRIDGE_BADGES = {
+  Connected: { text: "connected", css: "connected" },
+  Disconnected: { text: "disconnected — reconnecting; positions are stale", css: "error" },
+  Simulated: { text: "simulated (degraded)", css: "simulated" },
+};
+
 function renderBridgeMode(mode) {
-  bridgeModeEl.textContent = mode === "Connected" ? "connected" : "simulated (degraded)";
-  bridgeModeEl.className = `badge ${mode === "Connected" ? "connected" : "simulated"}`;
+  const badge = BRIDGE_BADGES[mode] ?? { text: `unknown mode: ${mode}`, css: "error" };
+  bridgeModeEl.textContent = badge.text;
+  bridgeModeEl.className = `badge ${badge.css}`;
 }
 
 function renderTable(drones) {
@@ -46,7 +55,7 @@ function renderTable(drones) {
       <td>${escapeHtml(drone.id)}</td>
       <td class="status-${escapeHtml(drone.status)}">${escapeHtml(drone.status)}</td>
       <td>${fmt(drone.position?.x)}, ${fmt(drone.position?.y)}, ${fmt(drone.position?.z)}</td>
-      <td>${fmt(drone.batteryPercent, 0)}%</td>
+      <td>${drone.batteryPercent == null ? "—" : `${fmt(drone.batteryPercent, 0)}%`}</td>
       <td>${drone.currentWaypointIndex ?? "—"}</td>
       <td>${updated}</td>
     `;
@@ -97,9 +106,11 @@ function statusColor(status) {
     case "InFlight": return "#3b82f6";
     case "Landed": return "#22c55e";
     case "Landing":
-    case "TakingOff": return "#f59e0b";
+    case "TakingOff":
+    case "Returning": return "#f59e0b";
+    case "Holding": return "#a855f7";
     case "Error": return "#ef4444";
-    default: return "#9ca3af";
+    default: return "#9ca3af"; // Idle, Unknown
   }
 }
 

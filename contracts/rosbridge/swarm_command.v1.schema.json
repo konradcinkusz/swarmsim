@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/konradcinkusz/swarmsim/contracts/rosbridge/swarm_command.v1.schema.json",
+  "title": "/swarm/command payload (v1)",
+  "description": "A swarm-wide override that pre-empts the current mission: return to launch, land in place, or hold position.",
+  "type": "object",
+  "required": ["version", "command"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "command": { "enum": ["rtl", "land", "hold"] },
+    "mission_id": { "type": ["string", "null"], "format": "uuid", "description": "The mission being aborted, if any." }
+  }
+}

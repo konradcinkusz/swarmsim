@@ -29,25 +29,27 @@ flowchart TB
 
     subgraph Api[".NET — SwarmApi"]
         Ep["Api: endpoints (transport only)"]
-        App["Application: MissionService"]
+        App["Application: MissionService<br/>validate · dispatch · abort · land · lifecycle"]
         Dom["Domain: Mission, SwarmState, Trajectory, Formation"]
-        Bridge["Infrastructure: ISwarmBridge<br/>RosBridgeSwarmBridge (real) /<br/>SimulatedSwarmBridge (P8 fallback)"]
+        Bridge["Infrastructure: ISwarmBridge<br/>RosBridgeSwarmBridge (real, reconnecting) /<br/>SimulatedSwarmBridge (no URL configured)"]
         Ep --> App --> Bridge
         App --> Dom
     end
 
-    subgraph Sim["docker/docker-compose.yml — simulation stack"]
+    subgraph Sim["docker/docker-compose.yml — sim container"]
         RB["rosbridge_suite<br/>WebSocket :9090"]
-        Coord["swarm_coordination (ROS 2)<br/>mission_dispatcher_node<br/>waypoint_follower_node × N<br/>formation_commander_node × N<br/>swarm_state_aggregator_node"]
-        PX4["PX4 SITL × N (MAVLink)"]
-        GZ["Gazebo Harmonic"]
+        Coord["swarm_coordination (ROS 2)<br/>mission_dispatcher_node<br/>drone_controller_node × N<br/>swarm_state_aggregator_node"]
+        MR["MAVROS × N"]
+        PX4["PX4 SITL × N"]
+        GZ["Gazebo Harmonic (headless)"]
         RB <--> Coord
-        Coord <--> PX4
+        Coord <--> MR
+        MR <-->|MAVLink| PX4
         PX4 <--> GZ
     end
 
     UI -->|HTTP| Ep
-    Bridge -->|WebSocket, /swarm/mission + /swarm/state| RB
+    Bridge -->|"WebSocket: /swarm/mission, /swarm/command →<br/>← /swarm/state (contracts/rosbridge/)"| RB
 ```
 
 Two composition roots, one per layer, and why — see
@@ -56,8 +58,10 @@ Two composition roots, one per layer, and why — see
 - **`docker/docker-compose.yml`** brings up the simulation stack, *and* the API wired
   to it (`api` service) — one command for the whole thing.
 - **`dotnet run --project backend/src/SwarmApi.Api`** brings up the API alone — no
-  simulation stack required: with `RosBridge:Url` unset or unreachable, it falls back
-  to a deterministic in-memory swarm (see
+  simulation stack required: with `RosBridge:Url` unset, it runs a deterministic
+  in-memory swarm. With it set, the API always uses the real swarm, and while rosbridge
+  is unreachable says so (`Disconnected`, HTTP 503 on writes) instead of substituting
+  the simulated one (see
   [`docs/adr/0003-rosbridge-degrade-pattern.md`](docs/adr/0003-rosbridge-degrade-pattern.md)).
 
 There is **no .NET Aspire AppHost** yet — a deliberate, recorded deviation, not an
@@ -72,26 +76,29 @@ every recorded deviation with its reasoning: [`docs/architecture/`](docs/archite
 
 | # | Scope | Status |
 |---|---|---|
-| M0 | Docker Compose environment; one drone (x500) spawns in Gazebo, responds to `commander takeoff` | Implemented; **not yet verified by any run** — see [note](#m0-manual-verification) |
-| M1 | 3-5 PX4 SITL instances in one world, namespaced ROS 2 topics per drone | Implemented (`simulation/px4-configs/`, `docker/entrypoint.sh`); not yet verified by any run, same as M0 |
-| M2 | Waypoint-following and leader-follower formation, no collisions | Implemented, unit tested (`swarm_coordination/`, `backend/.../Formation.cs`) |
-| M3 | `POST /api/missions`, `GET /api/swarm/state`, < 1s state latency | Implemented, integration tested against the simulated bridge (`backend/tests/SwarmApi.Api.Tests`) |
+| M0 | Docker Compose environment; one drone (x500) spawns in Gazebo, responds to `commander takeoff` | Implemented; flown by the SITL smoke job — see [note](#m0-manual-verification) |
+| M1 | 3-5 PX4 SITL instances in one world, namespaced ROS 2 topics per drone | Implemented (`simulation/px4-configs/`, `docker/entrypoint.sh`); the SITL smoke job flies three |
+| M2 | Waypoint-following and leader-follower formation, no collisions | Implemented, unit tested (`swarm_coordination/`, `backend/.../Formation.cs`); the SITL smoke job flies waypoint lanes and a line formation |
+| M3 | Missions in (`POST /api/missions`, abort, land-all), swarm state out (`GET /api/swarm/state`), < 1s state latency | Implemented; integration tested against the simulated swarm and an in-process rosbridge; flown end to end by the SITL smoke job, p95 state age 0.2 s |
 | M4 | Real-time swarm status readable without a terminal | Implemented (`backend/src/SwarmApi.Api/wwwroot/`) |
 | M5 | Natural-language mission layer | Out of scope for this repository's current phase |
 
 <a name="m0-manual-verification"></a>
-**Why "not yet verified":** until 2026-09-22 this stack could not have run from a clone
-at all — the per-drone configs had never been committed (a blanket `*.env` ignore rule
-swallowed them) and the image build started the simulator instead of compiling it. Both
-are fixed, and CI now checks the configs' presence, the compose file, the world file and
-the entrypoint's logic against stubs, but nothing yet builds `docker/Dockerfile.sim` and
-flies a drone (see
-[`docs/adr/0004-ci-scope-for-simulation-stack.md`](docs/adr/0004-ci-scope-for-simulation-stack.md)
-and the P13 row in [`docs/architecture/DEVIATIONS.md`](docs/architecture/DEVIATIONS.md)).
-M2's formation math and M3's API behaviour, in contrast, are covered by automated tests
-against pure logic and the simulated bridge. **If you run the M0/M1 walkthrough below,
-please report the result in an issue** — until a SITL job exists, that is the only
-evidence these rows can have.
+**What "flown by the SITL smoke job" means:** `.github/workflows/sim-smoke.yml` builds
+`docker/Dockerfile.sim`, starts the compose stack with three drones on a stock GitHub
+runner (headless, CPU only) and runs `docker/tests/sitl_smoke.py` against the API: every
+drone reported on its pad, a waypoint mission flown to completion and landed where it
+should, a formation mission aborted into a landing, and the age of the swarm state
+measured against M3's one-second budget. It runs on pull requests that touch what the
+image or the API is built from, nightly, and on demand. It first passed on 2026-09-22
+([run](https://github.com/konradcinkusz/swarmsim/actions/runs/35796734843)). The
+waypoint mission flew and landed in 28 s, and the p95 state age at the API was 0.2 s.
+The aborted formation was on the ground 14 s after the abort. What it took to get there
+is in
+[`docs/adr/0004-ci-scope-for-simulation-stack.md`](docs/adr/0004-ci-scope-for-simulation-stack.md):
+nothing below the SITL layer had caught any of it.
+The Gazebo GUI stays a manual check: **if you run the GUI walkthrough below, please
+report the result in an issue.**
 
 ## Quickstart
 
@@ -121,7 +128,9 @@ SWARM_DRONE_COUNT=1 docker compose -f docker-compose.yml -f docker-compose.gui.y
 ```
 
 First build compiles PX4 from source against ROS 2 Humble and Gazebo Harmonic — this
-is normal and can take 15-40 minutes the first time; subsequent runs reuse the image.
+is normal and can take 30-60 minutes the first time; subsequent runs reuse the image.
+`SWARM_COORDINATION=0` starts PX4 without MAVROS and the coordination nodes, if all you
+want is the bare console below.
 
 **Verify the drone responds to a command**, in a second terminal — each PX4 instance
 runs in its own named `tmux` session (see `docker/entrypoint.sh`), so attaching reaches
@@ -172,22 +181,48 @@ curl -s -X POST http://localhost:5000/api/missions \
 curl -s http://localhost:5000/api/swarm/state | jq
 ```
 
+A mission moves through `Active` to `Completed` (every assigned drone has flown its
+task and landed) or `Aborted`; starting a new one supersedes the active one. To stop a
+mission, or everything:
+
+```bash
+# rtl (default) | land | hold
+curl -s -X POST http://localhost:5000/api/missions/<id>/abort \
+  -H 'Content-Type: application/json' -d '{"action":"land"}' | jq
+curl -s http://localhost:5000/api/missions/<id> | jq      # status, endedAtUtc
+
+# every drone lands where it is, whatever it was doing
+curl -s -X POST http://localhost:5000/api/swarm/land | jq
+```
+
+`"type": "formation"` flies a leader-follower formation instead (`"formation": "line"`
+or `"v"`; the leader flies the waypoints, the followers hold their slots). Requests are
+checked against a safety envelope before anything is dispatched — at most 5 drones,
+altitude above 0 and at most 120 m, every waypoint within 1000 m of the origin horizontally, at most
+100 waypoints — configurable as `Missions__MaxDroneCount`, `Missions__MaxAltitudeMeters`,
+`Missions__GeofenceRadiusMeters`, `Missions__MaxWaypoints`. A request outside it gets a
+400 listing every violated rule.
+
 **Against a real simulation:** set `RosBridge__Url=ws://localhost:9090`, or just run
 `docker compose up` in `docker/` — it wires this automatically (`api` service's
 `RosBridge__Url=ws://sim:9090`, started only once the `sim` healthcheck sees rosbridge).
-`GET /health` reports which mode is active (`swarmBridge: "Connected" | "Simulated"`),
-and the dashboard's badge shows the same thing. The mode is chosen once, at startup; a
-connection that drops later is not yet reflected there (P8 row in
-[`DEVIATIONS.md`](docs/architecture/DEVIATIONS.md)).
+`GET /health` reports the mode at the moment you ask (`swarmBridge: "Connected" |
+"Disconnected" | "Simulated"`, plus `lastStateAgeSeconds`) and is `Degraded` while the
+swarm is unreachable; the dashboard's badge shows the same thing. While `Disconnected`,
+the API keeps reconnecting, shows the last positions it had as stale, and answers
+writes with 503 — a configured swarm is never quietly replaced by the simulated one.
 
 ### Authentication (optional)
 
 `Auth:Authority` unset (the default above) runs `SwarmApi.Api` in **Open** mode — every
 endpoint reachable with no token, exactly as in the two sections above. Set it to an
 [`authservice`](https://github.com/konradcinkusz/authservice) instance's base URL to
-switch to **Enforced** mode, which requires a valid bearer token (RS256, validated via
-that service's JWKS) on `POST /api/missions` — the mutating endpoint an MCP-driven Agent
-would call. `GET /health` reports which mode is active (`auth: "Open" | "Enforced"`).
+switch to **Enforced** mode, which denies by default: every endpoint requires a valid
+bearer token (RS256, validated via that service's JWKS) unless it explicitly opts out.
+The opt-outs are the dashboard's static files, `/health`, `/alive`, `GET
+/api/swarm/state` and `GET /api/missions/{id}`; every write — create, abort, land-all —
+needs a token, and so does any endpoint added later that forgets to decide. `GET
+/health` reports which mode is active (`auth: "Open" | "Enforced"`).
 See [`docs/adr/0005-mcp-server-and-bearer-auth.md`](docs/adr/0005-mcp-server-and-bearer-auth.md)
 for the reasoning and exact scope, and `docker compose --profile auth up` in `docker/`
 to run a local `authservice` instance alongside the stack (needs a generated signing key
@@ -238,12 +273,11 @@ A longer walkthrough for verifying the whole platform end to end, not just the f
    cd docker && docker compose up --build
    ```
 
-   This starts `sim` (ROS 2 + PX4 SITL + Gazebo + rosbridge) and then `api` (pointed at
-   `ws://sim:9090`) once `sim`'s healthcheck sees rosbridge accepting connections. Watch
-   the `api` container's logs for
-   `RosBridge reachable at ws://sim:9090; running in Connected mode.` If you still see the
-   "unreachable... falling back to Simulated mode" warning, the choice has been made for
-   this process's lifetime: `docker compose restart api` once `sim` is healthy.
+   This starts `sim` (Gazebo, one PX4 SITL instance and one MAVROS bridge per drone, the
+   `swarm_coordination` nodes and rosbridge) and then `api` (pointed at `ws://sim:9090`)
+   once `sim`'s healthcheck sees rosbridge accepting connections. Watch the `api`
+   container's logs for `RosBridge connected to ws://sim:9090; the swarm is reachable.`
+   Until then it logs a retry with a growing delay — there is nothing to restart.
 
 4. **Verify M0** exactly as in the [Quickstart](#one-drone-in-gazebo-m0) above:
    attach to `drone_1`'s `tmux` session and run `commander takeoff`.
@@ -260,19 +294,20 @@ A longer walkthrough for verifying the whole platform end to end, not just the f
    }'
    ```
 
-   This publishes to `/swarm/mission` over rosbridge. **Nothing in the compose stack
-   subscribes to it yet:** the `swarm_coordination` nodes that would pick it up
-   (`mission_dispatcher_node`, `swarm_state_aggregator_node`) and the MAVROS bridges they
-   need are not part of the `sim` image, so the mission reaches rosbridge and stops there,
-   and `GET /api/swarm/state` reports no drones. Running them means building the ROS 2
-   workspace yourself — step 6. Closing that gap is the next piece of work on the
-   simulation layer; until then, this step proves the API ↔ rosbridge wiring and nothing
-   beyond it.
+   This publishes to `/swarm/mission` over rosbridge. `mission_dispatcher_node` hands
+   `drone_1` its path, its `drone_controller_node` streams setpoints, switches PX4 to
+   OFFBOARD and arms it, flies the waypoints and lands at the last one; the aggregator
+   reports position, armed state, flight mode and battery back through `/swarm/state`.
+   `GET /api/swarm/state` shows it flying, and `GET /api/missions/<id>` turns `Completed`
+   once it has landed. `python3 docker/tests/sitl_smoke.py --api http://localhost:8080
+   --drones 5` runs the same checks CI runs.
 
-6. **Multi-drone formation (M2)**: build the ROS 2 workspace and launch a formation
-   mission — see [`swarm_coordination/README.md`](swarm_coordination/README.md) for the
-   full `mavros` setup this needs (kept out of the Docker image deliberately; see that
-   file for why).
+6. **Multi-drone formation (M2)**: the same request with `"type": "formation"`,
+   `"formation": "v"` and `"droneCount": 3` flies `drone_1` as the leader and the other
+   two in V slots behind it; `POST /api/missions/<id>/abort` with `{"action":"land"}`
+   lands all three where they are. How the ROS side is put together, and how to publish a
+   mission by hand with `ros2 topic pub`, is in
+   [`swarm_coordination/README.md`](swarm_coordination/README.md).
 
 ### Troubleshooting
 
@@ -283,17 +318,21 @@ A longer walkthrough for verifying the whole platform end to end, not just the f
 | Gazebo window never appears (GUI mode) | GUI override not used, or X11/WSLg passthrough not set up | Use `-f docker-compose.yml -f docker-compose.gui.yml`; run `xhost +local:docker` first (Linux); on Windows, confirm WSLg with `echo $DISPLAY` inside WSL2 — if empty, stay headless |
 | `error gathering device information ... /dev/dri` | The GUI override needs a GPU exposed as `/dev/dri` | Drop the override: the default stack is headless and needs no device |
 | `sim` exits with `no drone_*.env found` | A checkout from before 2026-09-22, when the drone configs were not in the repository | Pull `main`; `ls simulation/px4-configs/` should list `drone_1.env` … `drone_5.env` |
-| `swarmBridge: "Simulated"` when you expected `"Connected"` | `RosBridge:Url` unset, or the API started before rosbridge was up | The bridge is chosen once per process: `docker compose restart api` after `docker compose ps` shows `sim` healthy |
+| `swarmBridge: "Simulated"` when you expected `"Connected"` | `RosBridge:Url` is not set for this process | Set `RosBridge__Url` (the compose `api` service sets it to `ws://sim:9090`) |
+| `swarmBridge: "Disconnected"`, missions answer 503 | rosbridge unreachable: `sim` still starting, or it exited | Nothing to restart on the API side — it reconnects by itself. `docker compose ps` and `docker compose logs sim` for the simulation side |
+| API exits at startup: `RosBridge:Url '…' is not a ws:// or wss:// URL` | A typo in the URL (e.g. `http://`) | Fix it, or unset it for the simulated swarm — a typo no longer falls back silently |
+| A mission stays `Active`, drones on the ground | The drones' MAVROS bridges or controllers are not running | `docker compose exec sim tmux attach -t coordination` (or `/tmp/swarmsim/coordination.log` in the container) |
 | `bind: address already in use` on 8080/9090/5000 | Another process already holds that port | `lsof -i :8080` (or the relevant port) and stop it, or override the port in `docker-compose.yml` / `dotnet run --urls` |
 | `NETSDK1045: The current .NET SDK does not support targeting .NET 8.0` | Wrong/older .NET SDK installed | Install the .NET 8 SDK (`dotnet --list-sdks` to check) |
-| `ModuleNotFoundError: No module named 'rclpy'` running `pytest` | Tried to import `nodes/*.py` directly, or ran outside `swarm_coordination/` | Unit tests only ever import the pure `trajectory`/`waypoints`/`formation`/`mission_planning` modules — run `pytest` from `swarm_coordination/`, not against `nodes/` |
+| `ModuleNotFoundError: No module named 'rclpy'` running `pytest` | Tried to import `nodes/*.py` directly, or ran outside `swarm_coordination/` | The unit tests import only the pure modules, and exercise `nodes/` through the stand-in in `test/fake_ros.py` — run `pytest` from `swarm_coordination/` |
 | `docker compose exec sim tmux attach -t drone_1` → `can't find session` | `sim` hasn't spawned that instance, or is still building | `docker compose exec sim tmux ls` to see what's actually running; check `docker compose logs sim` for spawn errors |
 
 ## Repository layout
 
 | Path | What it is |
 |---|---|
-| `docker/` | Composition root for the simulation stack (Gazebo/PX4/ROS 2), its GUI override, the API's Dockerfile, and a stub-based test of the entrypoint |
+| `docker/` | Composition root for the simulation stack (Gazebo/PX4/ROS 2), its GUI override, the API's Dockerfile, a stub-based test of the entrypoint, and the SITL smoke test (`tests/sitl_smoke.py`) |
+| `contracts/` | The messages crossing rosbridge, as JSON Schema plus examples — both the .NET and the Python tests are held to them |
 | `simulation/` | Gazebo worlds, per-drone PX4 SITL configs |
 | `swarm_coordination/` | ROS 2 (ament_python) package: waypoint/formation logic + node adapters, and the scenario library (`swarm_coordination/scenarios/`) |
 | `backend/` | .NET solution: `SwarmApi.Domain/Application/Infrastructure/ServiceDefaults/Api` |
@@ -318,7 +357,7 @@ reviewer can ask about (`architecture-standards` REPO-BASELINE §4b).
 | `SwarmApi.Infrastructure` | 1 | `FrameworkReference: Microsoft.AspNetCore.App` for DI/Config/Logging abstractions + `System.Net.WebSockets` (BCL), plus `Microsoft.AspNetCore.Authentication.JwtBearer` (see below) |
 | `SwarmApi.ServiceDefaults` | 0 (packages) | Same `FrameworkReference` as above |
 | `SwarmApi.Api` | 0 | ASP.NET Core minimal APIs only |
-| Test projects (×3) | 5 shared | `Microsoft.NET.Test.Sdk`, `xunit`, `xunit.runner.visualstudio`, `Microsoft.AspNetCore.Mvc.Testing`, `coverlet.collector` — test tooling only |
+| Test projects (×4) | 6 shared | `Microsoft.NET.Test.Sdk`, `xunit`, `xunit.runner.visualstudio`, `Microsoft.AspNetCore.Mvc.Testing`, `Microsoft.AspNetCore.TestHost` (an in-process rosbridge stand-in), `coverlet.collector` — test tooling only |
 
 Runtime code ships **one third-party NuGet package**, a deliberate, recorded exception —
 [`docs/adr/0005-mcp-server-and-bearer-auth.md`](docs/adr/0005-mcp-server-and-bearer-auth.md).
@@ -339,12 +378,13 @@ connection — the same pure/adapter split as `swarm_coordination`.
 
 | Kind | Packages |
 |---|---|
-| Runtime (from the ROS 2 apt distro, not pip) | `rclpy`, `geometry_msgs`, `mavros_msgs`, `std_msgs` |
-| Dev/test (pip) | `ruff`, `pytest` |
+| Runtime (from the ROS 2 apt distro, not pip) | `rclpy`, `geometry_msgs`, `mavros_msgs`, `sensor_msgs`, `std_msgs`; `launch`, `launch_ros`, `mavros` to launch it (the sim image builds `mavros` and `mavros_msgs` from their release tags — see `docker/Dockerfile.sim`) |
+| Dev/test (pip) | `ruff`, `pytest`, `jsonschema` (the contract tests) |
 
 The pure-logic modules (`trajectory.py`, `waypoints.py`, `formation.py`,
-`mission_planning.py`) import **none** of the above — that's what lets CI test them
-with just `pip install ruff pytest`.
+`mission_planning.py`, `drone_controller.py`, `offboard.py`, `frames.py`, `px4_config.py`,
+`swarm_state.py`, `commands.py`) import **none** of the ROS packages — that's what lets
+CI test them with just `pip install ruff pytest jsonschema`.
 
 **Container base images:**
 
@@ -390,7 +430,10 @@ pip install mkdocs-material && mkdocs build --strict
 
 All of the above run in CI on every push and pull request (`.github/workflows/ci.yml`),
 along with Dockerfile linting (`hadolint`), an architecture test and size ceiling for the
-shared kernel, and secret scanning over the full git history (`gitleaks`).
+shared kernel, and secret scanning over the full git history (`gitleaks`). The SITL
+smoke test (`.github/workflows/sim-smoke.yml`) builds the simulation image and flies it;
+it takes most of an hour cold, so it runs only when the image's inputs change, nightly
+and on demand.
 
 ## Standards
 

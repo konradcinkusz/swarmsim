@@ -37,3 +37,16 @@ Accept the analysis's stack choice as-is:
   analysis's own risk list names.
 
 Worked example: `docker/Dockerfile.sim`, `docs/adr/0004-ci-scope-for-simulation-stack.md`.
+
+## Amendment — 2026-09-22: the image did not match this decision
+
+Until today the simulation image installed Gazebo through PX4's own
+`Tools/setup/ubuntu.sh`, and at the pinned v1.15.0 that script installs **Garden** on
+Ubuntu 22.04 — end of life since November 2024 — not the Harmonic chosen above. Nothing
+noticed, because nothing built the image. `docker/Dockerfile.sim` now installs
+`gz-harmonic` from packages.osrfoundation.org itself and runs PX4's installer with
+`--no-sim-tools`; PX4 v1.15's `gz_bridge` looks for Harmonic's `gz-transport13` first,
+and the build fails if `gz_bridge` was left out. The first consequence above is also
+revised: the image is built in CI now, by the SITL smoke job — see ADR-0004's amendment.
+The lesson generalises to the rest of this ADR: a pin is only a pin if something builds
+against it.

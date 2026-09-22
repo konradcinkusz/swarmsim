@@ -21,40 +21,43 @@ flowchart TB
 
     subgraph Api[".NET — SwarmApi"]
         Ep["Api: endpoints (transport only)"]
-        App["Application: MissionService"]
+        App["Application: MissionService<br/>validate · dispatch · abort · land · lifecycle"]
         Dom["Domain: Mission, SwarmState, Trajectory, Formation"]
-        Bridge["Infrastructure: ISwarmBridge<br/>RosBridgeSwarmBridge (real) /<br/>SimulatedSwarmBridge (P8 fallback)"]
+        Bridge["Infrastructure: ISwarmBridge<br/>RosBridgeSwarmBridge (real, reconnecting) /<br/>SimulatedSwarmBridge (no URL configured)"]
         Ep --> App --> Bridge
         App --> Dom
     end
 
-    subgraph Sim["docker/docker-compose.yml — simulation stack"]
+    subgraph Sim["docker/docker-compose.yml — sim container"]
         RB["rosbridge_suite<br/>WebSocket :9090"]
-        Coord["swarm_coordination (ROS 2)<br/>mission_dispatcher_node<br/>waypoint_follower_node × N<br/>formation_commander_node × N<br/>swarm_state_aggregator_node"]
-        PX4["PX4 SITL × N (MAVLink)"]
-        GZ["Gazebo Harmonic"]
+        Coord["swarm_coordination (ROS 2)<br/>mission_dispatcher_node<br/>drone_controller_node × N<br/>swarm_state_aggregator_node"]
+        MR["MAVROS × N"]
+        PX4["PX4 SITL × N"]
+        GZ["Gazebo Harmonic (headless)"]
         RB <--> Coord
-        Coord <--> PX4
+        Coord <--> MR
+        MR <-->|MAVLink| PX4
         PX4 <--> GZ
     end
 
     UI -->|HTTP| Ep
-    Bridge -->|WebSocket, /swarm/mission + /swarm/state| RB
+    Bridge -->|"WebSocket: /swarm/mission, /swarm/command →<br/>← /swarm/state (contracts/rosbridge/)"| RB
 ```
 
 Two composition roots, one per layer — `docker/docker-compose.yml` for the simulation
-stack (and the API wired to it), `dotnet run` for the API alone, falling back to a
-deterministic in-memory swarm when no simulation is reachable. See
+stack (and the API wired to it), `dotnet run` for the API alone, running a deterministic
+in-memory swarm when no simulation is configured. A configured simulation that is
+unreachable is reported as `Disconnected`, never replaced by the simulated one. See
 [ADR-0002](adr/0002-composition-root-split.md) and [ADR-0003](adr/0003-rosbridge-degrade-pattern.md).
 
 ## Milestones
 
 | # | Scope | Status |
 |---|---|---|
-| M0 | One drone (x500) spawns in Gazebo, responds to `commander takeoff` | Implemented; not yet verified by any run |
-| M1 | 3-5 PX4 SITL instances, namespaced ROS 2 topics per drone | Implemented; not yet verified by any run |
-| M2 | Waypoint-following and leader-follower formation, no collisions | Implemented, unit tested |
-| M3 | `POST /api/missions`, `GET /api/swarm/state`, < 1s state latency | Implemented, integration tested |
+| M0 | One drone (x500) spawns in Gazebo, responds to `commander takeoff` | Implemented; flown by the SITL smoke job |
+| M1 | 3-5 PX4 SITL instances, namespaced ROS 2 topics per drone | Implemented; the SITL smoke job flies three |
+| M2 | Waypoint-following and leader-follower formation, no collisions | Implemented, unit tested; flown by the SITL smoke job |
+| M3 | Missions in, swarm state out, abort and land-all, < 1s state latency | Implemented, integration tested; flown by the SITL smoke job, p95 state age 0.2 s |
 | M4 | Real-time swarm status readable without a terminal | Implemented |
 | M5 | Natural-language mission layer | Out of scope for this phase |
 

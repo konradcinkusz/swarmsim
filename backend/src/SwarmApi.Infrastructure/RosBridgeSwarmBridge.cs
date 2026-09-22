@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using SwarmApi.Application;
 using SwarmApi.Application.Contracts;
 using SwarmApi.Domain;
@@ -8,244 +9,313 @@ using SwarmApi.Domain;
 namespace SwarmApi.Infrastructure;
 
 /// <summary>
-/// The real <see cref="ISwarmBridge"/>: a persistent rosbridge_suite WebSocket
-/// connection. Publishes dispatched missions to <c>/swarm/mission</c> and maintains
-/// the latest <c>/swarm/state</c> message from a background receive loop — see
+/// The real <see cref="ISwarmBridge"/>: a rosbridge_suite WebSocket connection that
+/// publishes missions to <c>/swarm/mission</c> and commands to <c>/swarm/command</c>, and
+/// keeps the latest <c>/swarm/state</c>. The ROS-side other half of the contract is
 /// <c>swarm_coordination/nodes/mission_dispatcher_node.py</c> and
-/// <c>swarm_state_aggregator_node.py</c> for the ROS-side other half of this contract.
+/// <c>swarm_state_aggregator_node.py</c>; the messages themselves are in
+/// <c>contracts/rosbridge/</c> and encoded by <see cref="RosBridgeProtocol"/> (P11).
 ///
-/// The JSON dialect on the wire is normalized into the internal <c>SwarmApi.Domain</c>
-/// model right here, once (P11) — nothing above <see cref="ISwarmBridge"/> knows a
-/// rosbridge message was ever involved.
+/// The connection is owned by <see cref="RunAsync"/>, which <see cref="RosBridgeConnectionService"/>
+/// runs for the life of the process: it connects, reconnects with a doubling back-off
+/// after any failure or drop, and <see cref="Mode"/> says which state it is in at the
+/// moment it is read — so <c>/health</c> degrades when the swarm does, not only at startup.
 /// </summary>
 public sealed class RosBridgeSwarmBridge : ISwarmBridge, IAsyncDisposable
 {
-    private readonly Uri _uri;
-    private readonly ClientWebSocket _socket;
-    private readonly Dictionary<Guid, Mission> _missions = new();
-    private readonly object _stateLock = new();
-    private readonly object _missionsLock = new();
-    private SwarmState _lastState;
-    private CancellationTokenSource? _receiveLoopCts;
-    private Task? _receiveLoopTask;
+    /// <summary>Opens a WebSocket to <paramref name="uri"/>; injectable so tests can connect to an in-process server.</summary>
+    public delegate Task<WebSocket> Connector(Uri uri, CancellationToken cancellationToken);
 
-    public RosBridgeSwarmBridge(Uri uri, ClientWebSocket socket)
+    private readonly Uri _uri;
+    private readonly RosBridgeOptions _options;
+    private readonly TimeProvider _time;
+    private readonly ILogger _logger;
+    private readonly Connector _connect;
+
+    // ClientWebSocket allows one outstanding send at a time; requests arrive concurrently.
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private readonly object _stateLock = new();
+    private WebSocket? _socket;
+    private SwarmState? _lastState;
+    private DateTimeOffset? _lastStateReceivedUtc;
+    private long _malformedMessages;
+
+    public RosBridgeSwarmBridge(
+        Uri uri,
+        RosBridgeOptions options,
+        TimeProvider time,
+        ILogger<RosBridgeSwarmBridge> logger,
+        Connector? connector = null)
     {
         _uri = uri;
-        _socket = socket;
-        _lastState = new SwarmState
-        {
-            Drones = [],
-            ActiveMissionId = null,
-            TimestampUtc = DateTimeOffset.UtcNow,
-            BridgeMode = SwarmBridgeMode.Connected,
-        };
+        _options = options;
+        _time = time;
+        _logger = logger;
+        _connect = connector ?? ConnectClientWebSocketAsync;
     }
 
-    public SwarmBridgeMode Mode => SwarmBridgeMode.Connected;
+    public SwarmBridgeMode Mode =>
+        Volatile.Read(ref _socket) is { State: WebSocketState.Open } ? SwarmBridgeMode.Connected : SwarmBridgeMode.Disconnected;
+
+    public DateTimeOffset? LastStateReceivedUtc
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                return _lastStateReceivedUtc;
+            }
+        }
+    }
+
+    /// <summary>How many messages were dropped as malformed or oversized since startup.</summary>
+    public long MalformedMessageCount => Interlocked.Read(ref _malformedMessages);
 
     /// <summary>
-    /// Subscribes to <c>/swarm/state</c> and starts the background receive loop.
-    /// The socket must already be open — <see cref="ServiceCollectionExtensions.AddSwarmBridgeAsync"/>
-    /// owns the initial <c>ConnectAsync</c>, so a failed connection never leaves a bridge half-started.
+    /// Keeps a connection open until <paramref name="stoppingToken"/> fires: connect,
+    /// advertise the topics this client publishes, subscribe to state, receive until the
+    /// connection ends, then wait and try again. Never throws for a connection problem.
     /// </summary>
-    public Task StartAsync(CancellationToken cancellationToken)
+    public async Task RunAsync(CancellationToken stoppingToken)
     {
-        _receiveLoopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _receiveLoopTask = Task.Run(() => ReceiveLoopAsync(_receiveLoopCts.Token), CancellationToken.None);
-        return SendAsync(RosBridgeProtocol.Subscribe("/swarm/state"), cancellationToken);
-    }
+        var initialDelay = TimeSpan.FromSeconds(_options.ReconnectInitialDelaySeconds);
+        var maxDelay = TimeSpan.FromSeconds(Math.Max(_options.ReconnectMaxDelaySeconds, _options.ReconnectInitialDelaySeconds));
+        var delay = initialDelay;
 
-    public async Task<Mission> DispatchMissionAsync(
-        CreateMissionRequest request, CancellationToken cancellationToken = default)
-    {
-        var mission = new Mission
+        while (!stoppingToken.IsCancellationRequested)
         {
-            Id = Guid.NewGuid(),
-            Name = request.Name,
-            Type = request.Type == "formation" ? MissionType.LeaderFollowerFormation : MissionType.WaypointFollow,
-            Waypoints = request.Waypoints.Select(w => new Vector3(w.X, w.Y, w.Z)).ToList(),
-            DroneCount = request.DroneCount,
-            SpacingMeters = request.SpacingMeters,
-            CreatedAtUtc = DateTimeOffset.UtcNow,
-        };
-
-        lock (_missionsLock)
-        {
-            _missions[mission.Id] = mission;
-        }
-
-        var payload = JsonSerializer.Serialize(new
-        {
-            mission_id = mission.Id,
-            type = request.Type,
-            waypoints = request.Waypoints.Select(w => new[] { w.X, w.Y, w.Z }),
-            drone_count = request.DroneCount,
-            spacing_m = request.SpacingMeters,
-        });
-
-        await SendAsync(RosBridgeProtocol.Publish("/swarm/mission", payload), cancellationToken);
-        return mission;
-    }
-
-    public Task<SwarmState> GetStateAsync(CancellationToken cancellationToken = default)
-    {
-        lock (_stateLock)
-        {
-            return Task.FromResult(_lastState);
-        }
-    }
-
-    public Task<Mission?> GetMissionAsync(Guid missionId, CancellationToken cancellationToken = default)
-    {
-        lock (_missionsLock)
-        {
-            return Task.FromResult(_missions.GetValueOrDefault(missionId));
-        }
-    }
-
-    private async Task SendAsync(string json, CancellationToken cancellationToken)
-    {
-        var bytes = Encoding.UTF8.GetBytes(json);
-        await _socket.SendAsync(
-            new ArraySegment<byte>(bytes), WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
-    }
-
-    private async Task ReceiveLoopAsync(CancellationToken cancellationToken)
-    {
-        var buffer = new ArraySegment<byte>(new byte[16 * 1024]);
-        while (!cancellationToken.IsCancellationRequested && _socket.State == WebSocketState.Open)
-        {
+            WebSocket? socket = null;
             try
             {
-                using var messageStream = new MemoryStream();
-                WebSocketReceiveResult result;
-                do
+                using (var attempt = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken))
                 {
-                    result = await _socket.ReceiveAsync(buffer, cancellationToken);
-                    if (result.MessageType == WebSocketMessageType.Close)
-                    {
-                        return;
-                    }
-
-                    messageStream.Write(buffer.Array!, buffer.Offset, result.Count);
+                    attempt.CancelAfter(TimeSpan.FromSeconds(_options.ConnectTimeoutSeconds));
+                    socket = await _connect(_uri, attempt.Token);
+                    await SendRawAsync(socket, RosBridgeProtocol.Advertise(RosBridgeProtocol.MissionTopic), attempt.Token);
+                    await SendRawAsync(socket, RosBridgeProtocol.Advertise(RosBridgeProtocol.CommandTopic), attempt.Token);
+                    await SendRawAsync(socket, RosBridgeProtocol.Subscribe(RosBridgeProtocol.StateTopic), attempt.Token);
                 }
-                while (!result.EndOfMessage);
 
-                messageStream.Position = 0;
-                HandleIncomingMessage(messageStream);
+                Volatile.Write(ref _socket, socket);
+                delay = initialDelay;
+                _logger.LogInformation("RosBridge connected to {Url}; the swarm is reachable.", _uri);
+
+                await ReceiveLoopAsync(socket, stoppingToken);
+                if (!stoppingToken.IsCancellationRequested)
+                {
+                    _logger.LogWarning("RosBridge connection to {Url} closed; reconnecting.", _uri);
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    "RosBridge at {Url} unreachable ({Reason}); retrying in {DelaySeconds:0.#}s.",
+                    _uri, ex.Message, delay.TotalSeconds);
+            }
+            finally
+            {
+                await ReleaseSocketAsync(socket);
+            }
+
+            try
+            {
+                await Task.Delay(delay, _time, stoppingToken);
             }
             catch (OperationCanceledException)
             {
-                return;
+                break;
             }
-            catch (WebSocketException)
-            {
-                // The connection dropped after startup: GetStateAsync keeps serving the
-                // last known state (stale, not wrong) rather than throwing into a
-                // request handler. Reconnection is a documented follow-up — see
-                // docs/architecture/DEVIATIONS.md.
-                return;
-            }
+
+            delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, maxDelay.Ticks));
         }
     }
 
-    private void HandleIncomingMessage(Stream messageStream)
+    public Task DispatchMissionAsync(Mission mission, CancellationToken cancellationToken = default) =>
+        PublishAsync(RosBridgeProtocol.MissionTopic, RosBridgeProtocol.MissionPayload(mission), cancellationToken);
+
+    public Task SendCommandAsync(SwarmCommand command, Guid? missionId, CancellationToken cancellationToken = default) =>
+        PublishAsync(RosBridgeProtocol.CommandTopic, RosBridgeProtocol.CommandPayload(command, missionId), cancellationToken);
+
+    public Task<SwarmState> GetStateAsync(CancellationToken cancellationToken = default)
     {
-        using var document = JsonDocument.Parse(messageStream);
-        var root = document.RootElement;
-        if (!root.TryGetProperty("topic", out var topicElement) || topicElement.GetString() != "/swarm/state")
-        {
-            return;
-        }
-
-        if (!root.TryGetProperty("msg", out var msgElement) || !msgElement.TryGetProperty("data", out var dataElement))
-        {
-            return;
-        }
-
-        var stateJson = dataElement.GetString();
-        if (string.IsNullOrEmpty(stateJson))
-        {
-            return;
-        }
-
-        var state = ParseSwarmState(stateJson);
+        var mode = Mode;
         lock (_stateLock)
         {
-            _lastState = state;
-        }
-    }
-
-    private static SwarmState ParseSwarmState(string json)
-    {
-        using var document = JsonDocument.Parse(json);
-        var drones = new List<DroneState>();
-        var now = DateTimeOffset.UtcNow;
-
-        if (document.RootElement.TryGetProperty("drones", out var dronesElement))
-        {
-            foreach (var d in dronesElement.EnumerateArray())
+            // The last state received, however old, with the live mode stamped on it:
+            // stale positions are still the best available, but never labelled Connected
+            // once the connection they came from is gone. Each drone's LastUpdatedUtc and
+            // /health's lastStateAgeSeconds say how old they are.
+            return Task.FromResult(new SwarmState
             {
-                drones.Add(new DroneState
-                {
-                    Id = d.GetProperty("id").GetString() ?? "unknown",
-                    Position = new Vector3(
-                        d.GetProperty("x").GetDouble(),
-                        d.GetProperty("y").GetDouble(),
-                        d.GetProperty("z").GetDouble()),
-                    Status = DroneStatus.InFlight,
-                    LastUpdatedUtc = now,
-                });
-            }
+                Drones = _lastState?.Drones ?? [],
+                ActiveMissionId = _lastState?.ActiveMissionId,
+                ActiveMissionComplete = _lastState?.ActiveMissionComplete ?? false,
+                TimestampUtc = _lastStateReceivedUtc ?? _time.GetUtcNow(),
+                BridgeMode = mode,
+            });
         }
-
-        return new SwarmState
-        {
-            Drones = drones,
-            ActiveMissionId = null,
-            TimestampUtc = now,
-            BridgeMode = SwarmBridgeMode.Connected,
-        };
     }
 
     public async ValueTask DisposeAsync()
     {
-        _receiveLoopCts?.Cancel();
-        if (_receiveLoopTask is not null)
-        {
-            try
-            {
-                await _receiveLoopTask;
-            }
-            catch (OperationCanceledException)
-            {
-                // expected on shutdown
-            }
-        }
-
-        if (_socket.State == WebSocketState.Open)
-        {
-            try
-            {
-                await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "shutting down", CancellationToken.None);
-            }
-            catch (WebSocketException)
-            {
-                // best-effort close
-            }
-        }
-
-        _socket.Dispose();
-        _receiveLoopCts?.Dispose();
+        await ReleaseSocketAsync(Volatile.Read(ref _socket));
+        _sendLock.Dispose();
     }
-}
 
-internal static class RosBridgeProtocol
-{
-    public static string Subscribe(string topic) =>
-        JsonSerializer.Serialize(new { op = "subscribe", topic, type = "std_msgs/String" });
+    private async Task PublishAsync(string topic, string payload, CancellationToken cancellationToken)
+    {
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            var socket = Volatile.Read(ref _socket);
+            if (socket is not { State: WebSocketState.Open })
+            {
+                throw new SwarmUnavailableException(
+                    $"The swarm is not reachable: rosbridge at {_uri} is disconnected and being retried.");
+            }
 
-    public static string Publish(string topic, string dataJson) =>
-        JsonSerializer.Serialize(new { op = "publish", topic, msg = new { data = dataJson } });
+            await SendRawAsync(socket, RosBridgeProtocol.Publish(topic, payload), cancellationToken);
+        }
+        catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException or IOException)
+        {
+            // Indeterminate: part of the message may have left. Reported as unavailable so a
+            // caller does not assume the mission is flying — and must not blindly resend it.
+            throw new SwarmUnavailableException($"Sending to rosbridge at {_uri} failed: {ex.Message}", ex);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    private static Task SendRawAsync(WebSocket socket, string json, CancellationToken cancellationToken) =>
+        socket.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(json)), WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+
+    private async Task ReceiveLoopAsync(WebSocket socket, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[16 * 1024];
+        using var message = new MemoryStream();
+
+        while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+        {
+            message.SetLength(0);
+            var oversized = false;
+            ValueWebSocketReceiveResult result;
+            do
+            {
+                result = await socket.ReceiveAsync(buffer.AsMemory(), cancellationToken);
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    return;
+                }
+
+                if (message.Length + result.Count > _options.MaxMessageBytes)
+                {
+                    oversized = true;
+                }
+                else
+                {
+                    message.Write(buffer, 0, result.Count);
+                }
+            }
+            while (!result.EndOfMessage);
+
+            if (oversized)
+            {
+                CountMalformed($"a message larger than {_options.MaxMessageBytes} bytes", null);
+                continue;
+            }
+
+            HandleMessage(Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length));
+        }
+    }
+
+    private void HandleMessage(string text)
+    {
+        try
+        {
+            if (!RosBridgeProtocol.TryReadStateEnvelope(text, out var stateJson))
+            {
+                return;
+            }
+
+            var now = _time.GetUtcNow();
+            var state = RosBridgeProtocol.ParseState(stateJson, now);
+            lock (_stateLock)
+            {
+                _lastState = state;
+                _lastStateReceivedUtc = now;
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or FormatException)
+        {
+            // One bad message must not end the loop: before, it faulted the receive task
+            // silently and froze the state while /health still said Connected.
+            CountMalformed("a malformed message", ex);
+        }
+    }
+
+    private void CountMalformed(string what, Exception? ex)
+    {
+        var count = Interlocked.Increment(ref _malformedMessages);
+        if (count == 1 || count % 100 == 0)
+        {
+            _logger.LogWarning(ex, "RosBridge dropped {What} ({Count} dropped so far).", what, count);
+        }
+    }
+
+    private async Task ReleaseSocketAsync(WebSocket? socket)
+    {
+        if (socket is null)
+        {
+            return;
+        }
+
+        // Taking the send lock means no publish is mid-flight on the socket being disposed.
+        await _sendLock.WaitAsync();
+        try
+        {
+            Interlocked.CompareExchange(ref _socket, null, socket);
+            if (socket.State == WebSocketState.Open)
+            {
+                using var closeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                try
+                {
+                    await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "reconnecting", closeTimeout.Token);
+                }
+#pragma warning disable CA1031 // Best effort by design: this runs in RunAsync's finally, and anything
+                // escaping it would end the background service — and with it the host.
+                catch (Exception)
+#pragma warning restore CA1031
+                {
+                    // the peer may already be gone; the socket is disposed below either way
+                }
+            }
+
+            socket.Dispose();
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    private static async Task<WebSocket> ConnectClientWebSocketAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        var socket = new ClientWebSocket();
+        try
+        {
+            await socket.ConnectAsync(uri, cancellationToken);
+            return socket;
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
 }
