@@ -111,6 +111,7 @@ class DroneControllerNode(Node):
 
         self._arm_client = self.create_client(CommandBool, "mavros/cmd/arming")
         self._mode_client = self.create_client(SetMode, "mavros/set_mode")
+        self._last_warning_s: dict[str, float] = {}
 
         self.create_timer(1.0 / CONTROL_RATE_HZ, self._on_tick)
         self.create_timer(1.0, self._republish_progress)
@@ -209,15 +210,42 @@ class DroneControllerNode(Node):
         if out.setpoint is not None:
             local = world_to_local(out.setpoint, self._spawn, self._home_height or 0.0)
             self._setpoint_pub.publish(_pose(local, "map", now.to_msg()))
-        if out.request_mode is not None and self._mode_client.service_is_ready():
+        if out.request_mode is not None:
             request = SetMode.Request()
             request.custom_mode = out.request_mode
-            self._mode_client.call_async(request)
-        if out.request_arm and self._arm_client.service_is_ready():
+            self._ask(self._mode_client, "mavros/set_mode", request, out.request_mode, _mode_sent)
+        if out.request_arm:
             request = CommandBool.Request()
             request.value = True
-            self._arm_client.call_async(request)
+            self._ask(self._arm_client, "mavros/cmd/arming", request, "arming", _arm_accepted)
         self._publish_progress(only_if_changed=True)
+
+    def _ask(self, client, service: str, request, what: str, accepted) -> None:
+        """One request to PX4 through MAVROS. The sequencer repeats it once a second until
+        PX4's reported state says it happened, so each attempt and each refusal is logged:
+        a drone that never takes off says why."""
+        if not client.service_is_ready():
+            self._warn_every(5.0, service, f"cannot ask PX4 for {what}: {service} is not available")
+            return
+        self.get_logger().info(f"asking PX4 for {what}")
+        client.call_async(request).add_done_callback(
+            lambda future: self._on_answer(future, what, accepted)
+        )
+
+    def _on_answer(self, future, what: str, accepted) -> None:
+        try:
+            response = future.result()
+        except Exception as exc:  # noqa: BLE001 - any failure of the call is worth a line
+            self._warn_every(5.0, what, f"request for {what} failed: {exc}")
+            return
+        if not accepted(response):
+            self._warn_every(5.0, what, f"PX4 refused {what}: {response}")
+
+    def _warn_every(self, period_s: float, key: str, text: str) -> None:
+        now_s = self.get_clock().now().nanoseconds * 1e-9
+        if now_s - self._last_warning_s.get(key, float("-inf")) >= period_s:
+            self._last_warning_s[key] = now_s
+            self.get_logger().warning(text)
 
     def _republish_progress(self) -> None:
         self._publish_progress(only_if_changed=False)
@@ -228,6 +256,14 @@ class DroneControllerNode(Node):
             return
         self._last_progress = data
         self._progress_pub.publish(String(data=data))
+
+
+def _mode_sent(response) -> bool:
+    return bool(getattr(response, "mode_sent", False))
+
+
+def _arm_accepted(response) -> bool:
+    return bool(getattr(response, "success", False))
 
 
 def main() -> None:

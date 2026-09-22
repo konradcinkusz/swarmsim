@@ -90,17 +90,35 @@ class _Subscription:
         self.callback = callback
 
 
+class _Future:
+    """An already-answered call: callbacks run as soon as they are added."""
+
+    def __init__(self, response):
+        self._response = response
+
+    def done(self):
+        return True
+
+    def result(self):
+        return self._response
+
+    def add_done_callback(self, callback):
+        callback(self)
+
+
 class _Client:
     def __init__(self, name):
         self.name = name
         self.requests = []
+        self.ready = True
+        self.response = SimpleNamespace(mode_sent=True, success=True, result=0)
 
     def service_is_ready(self):
-        return True
+        return self.ready
 
     def call_async(self, request):
         self.requests.append(request)
-        return SimpleNamespace(done=lambda: True)
+        return _Future(self.response)
 
 
 class _Parameter:

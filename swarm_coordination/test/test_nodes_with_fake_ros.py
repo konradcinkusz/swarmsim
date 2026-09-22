@@ -2,6 +2,7 @@
 publishes in answer to what it hears. Real DDS and PX4 are the SITL smoke's job."""
 
 import json
+import types
 from pathlib import Path
 
 import fake_ros
@@ -156,6 +157,33 @@ def test_the_controller_flies_a_world_frame_path_with_local_frame_setpoints(bus)
     bus.advance(0.1)
     fake_ros.fire(node, period=0.1)
     assert node.clients["/drone_2/mavros/cmd/arming"].requests[-1].value is True
+
+
+def test_a_drone_that_cannot_take_off_says_why(bus):
+    node = _controller(bus)
+    arming = node.clients["/drone_2/mavros/cmd/arming"]
+    arming.response = types.SimpleNamespace(success=False, result=4)  # MAV_RESULT_FAILED
+    node.clients["/drone_2/mavros/set_mode"].ready = False
+    bus.publish("/drone_2/mavros/local_position/pose", fake_ros.pose(0.0, 0.0, 0.0))
+    bus.publish(
+        "/drone_2/mission/assignment",
+        fake_ros.String(json.dumps({"mission_id": MISSION, "waypoints": [[0.0, 3.0, 5.0]]})),
+    )
+
+    for _ in range(25):
+        bus.advance(0.1)
+        fake_ros.fire(node, period=0.1)
+    warnings = [text for level, text in node.get_logger().lines if level == "warning"]
+    assert warnings == ["cannot ask PX4 for OFFBOARD: mavros/set_mode is not available"]
+    assert node.clients["/drone_2/mavros/set_mode"].requests == []
+
+    node.clients["/drone_2/mavros/set_mode"].ready = True
+    bus.publish("/drone_2/mavros/state", fake_ros.State(armed=False, mode="OFFBOARD"))
+    bus.advance(0.1)
+    fake_ros.fire(node, period=0.1)
+    warnings = [text for level, text in node.get_logger().lines if level == "warning"]
+    assert warnings[-1].startswith("PX4 refused arming:")
+    assert ("info", "asking PX4 for arming") in node.get_logger().lines
 
 
 def test_a_follower_subscribes_to_its_leader_and_lands_when_the_leader_finishes(bus):
