@@ -100,3 +100,19 @@ correctness over the badge.
   has been tagged in that repo at the time of this ADR) — `docker/docker-compose.yml`
   builds it from that repo's git context as an interim measure; swap to a pinned tag once
   a release exists (see that repo's README, "Releasing").
+
+## Amendment — 2026-09-22: plain-http authority, and tests through the host
+
+- **`Auth:RequireHttpsMetadata`** (default `true`) is now an explicit option. The compose
+  `auth` profile's authservice serves plain http inside the compose network, and with the
+  JwtBearer default every gated request failed with a 500 before any token was examined —
+  the documented local setup never worked. Setting it to `false` is for that private
+  network only, and the API logs a warning when it is. `docker/.env.example` shows the pair
+  of variables the profile needs.
+- **Enforced mode is now tested through the real host**
+  (`backend/tests/SwarmApi.Api.Tests/EnforcedAuthEndpointTests.cs`): `POST /api/missions`
+  without a token is 401, reads and `/health` stay open, and the http-authority case above
+  answers 401 rather than 500. The original tests could only check the DI registration
+  because `ConfigureAppConfiguration` in `WebApplicationFactory` is applied after
+  `Program.cs` reads `Auth:Authority`; `UseSetting` is applied before it, which is what the
+  new tests use.

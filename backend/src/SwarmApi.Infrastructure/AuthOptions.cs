@@ -17,4 +17,12 @@ public sealed class AuthOptions
 
     /// <summary>JWT issuer this deployment validates. Must match `authservice`'s `Jwt:Issuer`.</summary>
     public string Issuer { get; set; } = "AuthService";
+
+    /// <summary>
+    /// Whether the authority's metadata/JWKS must be fetched over HTTPS (default: true).
+    /// Only the local compose `auth` profile turns it off, because `authservice` serves
+    /// plain http inside that network; left on there, JwtBearer refuses the http
+    /// metadata address on the first gated request and the API answers 500.
+    /// </summary>
+    public bool RequireHttpsMetadata { get; set; } = true;
 }
