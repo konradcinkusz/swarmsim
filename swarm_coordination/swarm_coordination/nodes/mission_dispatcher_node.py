@@ -35,7 +35,8 @@ class MissionDispatcherNode(Node):
         # publisher created just before its first message may not be matched with its
         # subscribers yet, and a volatile message sent then is lost. Not in
         # `self._publishers`: rclpy.node.Node keeps its own list there, and replacing it
-        # killed this node at start in every SITL smoke run until 2026-09-22.
+        # killed this node at start in every SITL smoke run that started it, until
+        # 2026-09-22.
         self._topic_publishers: dict[str, object] = {}
         for drone in self._drones:
             for topic in ("mission/assignment", "mission/slot", "mission/command"):

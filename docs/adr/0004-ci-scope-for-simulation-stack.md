@@ -96,8 +96,8 @@ Getting there found, run by run, what no test below this layer could have seen:
   three PX4 instances and Gazebo, and its time-sync round trip reached 1.3 s. It now
   loads only the six plugins the nodes use (`px4_config.MAVROS_PLUGINS`).
 - **The dispatcher never ran.** It kept its publishers in `self._publishers`, where
-  `rclpy.node.Node` keeps its own list, and died at start in every run, so no mission
-  ever reached a drone. The fake rclpy the node tests use kept its books under other
+  `rclpy.node.Node` keeps its own list. It died at start in every run that got as far
+  as starting it, so no mission ever reached a drone. The fake rclpy the node tests use kept its books under other
   names, and passed. It now keeps them under rclpy's names, and refuses a node that
   takes one over.
 

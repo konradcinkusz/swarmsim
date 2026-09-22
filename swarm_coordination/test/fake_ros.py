@@ -138,9 +138,9 @@ class _Parameter:
 # rclpy/node.py). rclpy lets a subclass overwrite any of them, and the node breaks later,
 # somewhere else. The mission dispatcher kept its publishers in a dict named
 # `self._publishers`; every create_publisher after that failed with "'dict' object has no
-# attribute 'append'", so it died at start in every SITL smoke run while these tests, whose
-# fake kept its books under other names, passed. The fake keeps its books under rclpy's
-# names and refuses a subclass that assigns one of them.
+# attribute 'append'", so it died at start in every SITL smoke run that started it, while
+# these tests, whose fake kept its books under other names, passed. The fake keeps its
+# books under rclpy's names and refuses a subclass that assigns one of them.
 RCLPY_NODE_ATTRIBUTES = frozenset(
     {
         "_context",

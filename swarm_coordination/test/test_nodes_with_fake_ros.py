@@ -41,7 +41,8 @@ def _json(msg):
 def test_a_node_that_takes_over_rclpy_s_own_attributes_fails_here_as_in_rclpy(bus):
     # rclpy.node.Node keeps its publishers, timers, clock and logger in attributes of the
     # node itself. A subclass that assigns one of them breaks rclpy later, somewhere else:
-    # the dispatcher did, and died at start in every SITL smoke run while these tests passed.
+    # the dispatcher did, and died at start in every SITL smoke run that started it, while
+    # these tests passed.
     from rclpy.node import Node
 
     class TakesOver(Node):
