@@ -41,6 +41,10 @@ simulation/PX4-Autopilot/
 # --- Docker / containers ---------------------------------------------------
 *.last-image-tag
 
+# --- Test output -------------------------------------------------------------
+# The e2e fixture's log of the SwarmApi.Api it starts (e2e/conftest.py).
+e2e/api.log
+
 # --- Editors / OS -----------------------------------------------------------
 .idea/
 .DS_Store
