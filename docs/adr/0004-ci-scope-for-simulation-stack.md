@@ -48,3 +48,24 @@ assumed covered by CI.
   automated. Until then, `docs/adr/0004` is the answer to "why doesn't CI catch this."
 
 Worked example: `.github/workflows/ci.yml` (jobs `docker-lint`, `simulation-config`).
+
+## Amendment — 2026-09-22: the trigger fired, and part of the reasoning was wrong
+
+The decision above rested partly on this repository's *agent sandbox* being unable to
+reach PX4's, ROS's and Gazebo's hosts. That is a property of the sandbox, not of a GitHub
+Actions runner, which reaches all of them. And the "needs a GPU" constraint applies only
+to the Gazebo GUI: PX4 SITL with a headless Gazebo server runs on CPU, and the x500's
+sensors (IMU, barometer, magnetometer, GNSS) need no rendering. The recorded trigger — a
+runner able to build the image and fly a drone — was therefore already met.
+
+What changed: `.github/workflows/sim-smoke.yml` builds `docker/Dockerfile.sim` (layers
+cached in GHCR), starts the compose stack with three drones, headless, and runs
+`docker/tests/sitl_smoke.py` against `SwarmApi.Api`: every drone at its pad in the world
+frame (M1), a waypoint mission that takes off, flies its lanes, lands and reports
+Completed (M0, M3), the p95 age of state at the API (M3's "< 1 s", measured rather than
+asserted), and an abort that lands a flying formation. It runs on pull requests touching
+what the image or the API is built from, nightly, and on demand — not on every PR, because
+a cold build takes most of an hour. The per-PR `ci.yml` checks stay as they were, plus a
+stub-based test of the entrypoint's logic.
+
+The GUI acceptance path (a Gazebo window on a real display) remains manual.

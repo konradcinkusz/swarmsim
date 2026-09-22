@@ -24,9 +24,10 @@ reasoning; check there before assuming a gap is accidental.
 
 | Path | What it is | Tooling |
 |---|---|---|
-| `docker/` | Composition root for the simulation stack (Gazebo/PX4/ROS 2), GUI override, entrypoint + its stub test | `docker compose`, `shellcheck` |
+| `docker/` | Composition root for the simulation stack (Gazebo/PX4/ROS 2), GUI override, entrypoint + its stub test, SITL smoke test (`tests/sitl_smoke.py`) | `docker compose`, `shellcheck` |
 | `simulation/` | Gazebo worlds (file name = world name), PX4 per-drone configs (committed, not secrets) | — |
-| `swarm_coordination/` | ROS 2 ament_python package: waypoint/formation logic + node wrappers | `colcon`, `pytest`, `ruff` |
+| `swarm_coordination/` | ROS 2 ament_python package: per-drone controller, mission dispatcher, state aggregator — pure logic + thin MAVROS node adapters | `colcon`, `pytest`, `ruff` |
+| `contracts/` | JSON Schemas + examples for every message crossing rosbridge; both test suites are held to them | `jsonschema` (Python tests) |
 | `backend/` | .NET solution: `SwarmApi.Domain/Application/Infrastructure/ServiceDefaults/Api` | `dotnet` |
 | `mcp_server/` | MCP server: swarm-level tools over `SwarmApi.Api`'s REST surface, no ROS dependency | `pytest`, `ruff` |
 | `docs/adr/` | One decision record per architectural choice | — |
@@ -36,19 +37,28 @@ reasoning; check there before assuming a gap is accidental.
 ## Before changing code
 
 - Changing `swarm_coordination`: keep ROS-node files (`nodes/`) as thin I/O adapters;
-  put logic in the plain, `rclpy`-free modules (`formation.py`, `waypoints.py`,
-  `trajectory.py`) so it stays testable without a ROS 2 install. `pytest` in CI only
-  imports the latter.
+  put every decision in the plain, `rclpy`-free modules (`drone_controller.py`,
+  `offboard.py`, `mission_planning.py`, `swarm_state.py`, `frames.py`, `formation.py`,
+  ...) so it stays testable without a ROS 2 install. `test/fake_ros.py` stands in for
+  `rclpy` when a test needs to drive a node. Missions and state are in the shared world
+  frame; only the controller node converts to a drone's local frame (`frames.py`).
+- Changing a message that crosses rosbridge (`/swarm/mission`, `/swarm/command`,
+  `/swarm/state`): change `contracts/rosbridge/` first — schema and example — then both
+  sides (`RosBridgeProtocol.cs`, `mission_planning.py` / `swarm_state.py`). Both test
+  suites load the same example files, so a one-sided change fails CI.
 - Changing `backend/`: `Program.cs` stays a manifest (one call per capability); business
   logic goes in `SwarmApi.Application`/`SwarmApi.Domain`, not in the endpoint handlers.
   A new integration (a second bridge transport, a persistence store) is an interface in
   `SwarmApi.Application` plus a DI registration, not a base class.
-- Changing `docker/Dockerfile.sim` or `docker/entrypoint.sh`: the image is not built in CI
-  (see `docs/adr/0004-ci-scope-for-simulation-stack.md`), so read PX4's own init scripts
-  for the pinned `PX4_VERSION` before assuming how a variable or make target behaves —
-  `gz_x500` is a run target, not a build target, and PX4 treats any non-empty `HEADLESS`
-  as headless. `docker/tests/test_entrypoint.sh` checks the entrypoint's decisions
-  against stubs; keep it passing and extend it with the entrypoint.
+- Changing `docker/Dockerfile.sim` or `docker/entrypoint.sh`: the image is built and flown
+  only by `.github/workflows/sim-smoke.yml` (most of an hour cold; see
+  `docs/adr/0004-ci-scope-for-simulation-stack.md`), so read PX4's own scripts for the
+  pinned `PX4_VERSION` before assuming how a variable or make target behaves —
+  `gz_x500` is a run target, not a build target; PX4 treats any non-empty `HEADLESS` as
+  headless; its `Tools/setup/ubuntu.sh` installs Gazebo Garden, not the Harmonic
+  ADR-0001 chose, and pip-installs NumPy 2, which must stay out of the runtime stage.
+  `docker/tests/test_entrypoint.sh` checks the entrypoint's decisions against stubs;
+  keep it passing and extend it with the entrypoint.
 - Adding to `.gitignore`: name the files, not an extension. `*.env` once hid the
   committed drone configs in `simulation/px4-configs/`.
 - Any new external dependency (a second bridge transport, a cloud API) needs a working
@@ -66,7 +76,8 @@ reasoning; check there before assuming a gap is accidental.
 - `.NET`: `dotnet test backend/SwarmPlatform.sln`. On an Ubuntu 24.04 sandbox whose
   network policy blocks Microsoft's download hosts, `apt-get install dotnet-sdk-8.0`
   (Ubuntu's own archive) usually still works; otherwise let CI run it.
-- Python: `cd swarm_coordination && ruff check . && pytest`.
+- Python: `cd swarm_coordination && ruff check . && pytest` (`pip install jsonschema` too,
+  or the contract tests skip — CI installs it).
 - MCP server: `cd mcp_server && ruff check . && pytest` (no `mcp` install needed — only
   `swarm_client.py` is exercised).
 - Simulation config: `docker compose -f docker/docker-compose.yml config -q` (and
@@ -76,5 +87,6 @@ reasoning; check there before assuming a gap is accidental.
 
 Do not attempt to build `Dockerfile.sim` or run Gazebo/PX4 SITL inside an agent sandbox:
 the build takes tens of minutes and the sandbox's network policy blocks hosts it needs.
-The headless stack needs no GPU, though — only the optional GUI does — so a GitHub
-Actions runner is a different question from this sandbox; see `docs/adr/0004`.
+The headless stack needs no GPU, though — only the optional GUI does — so it runs on a
+GitHub Actions runner instead: push, and read the `SITL smoke` job's summary and its
+`sitl-logs` artifact (every tmux pane, Gazebo's log, the compose logs).

@@ -76,3 +76,34 @@ Two gaps the decision did not address are recorded here rather than silently abs
   container existed, well before rosbridge listened, so the one-time probe almost always
   chose Simulated. `docker/docker-compose.yml` now gates `api` on the `sim` healthcheck
   (rosbridge accepting connections).
+
+## Amendment — 2026-09-22 (later the same day): the decision itself, revised
+
+The original decision — probe once at startup, fall back to the simulated swarm if the
+probe fails — is replaced, because both of its failure modes were worse than the
+degradation it was avoiding:
+
+- **A configured swarm is never replaced by a simulated one.** If `RosBridge:Url` is set,
+  the real bridge is registered, full stop. While rosbridge is unreachable it reports
+  `Disconnected` (a new `SwarmBridgeMode`), refuses to dispatch (HTTP 503, so no caller
+  mistakes a mission for flying), and reconnects in the background with a doubling
+  back-off. The simulated swarm is reserved for "no URL configured" — the
+  `git clone && dotnet run` case P8 names. A URL that is set but is not `ws://` or
+  `wss://` stops startup rather than falling back, for the same reason. Showing an operator stand-in drones because
+  the real ones were briefly unreachable at boot was the more dangerous degradation.
+- **Degradation is visible for the process's whole life, not only at startup.**
+  `/health` reports `swarmBridge` as Connected/Disconnected at the moment it is read,
+  with `lastStateAgeSeconds`, and is `Degraded` (still HTTP 200) while disconnected. The
+  swarm state is stamped with the live mode, so the dashboard says "disconnected —
+  positions are stale" instead of showing old positions as live.
+- **The connection's lifecycle belongs to the host** (`RosBridgeConnectionService`, a
+  `BackgroundService`), not to a probe in `Program.cs`. One malformed or oversized message
+  is counted and dropped; it no longer ends the receive loop.
+- **Nothing the swarm did not report is invented.** Battery, armed state and flight mode
+  come from MAVROS through `/swarm/state` or are null; the old parser stamped every drone
+  `InFlight` at 100 % battery.
+
+The messages crossing rosbridge are now written down once, in `contracts/rosbridge/`, and
+both sides are tested against the same example files. Worked example:
+`backend/tests/SwarmApi.Infrastructure.Tests/` (an in-process fake rosbridge that drops,
+refuses and reconnects).
