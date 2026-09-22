@@ -21,8 +21,12 @@ public sealed class MissionService(ISwarmBridge bridge, MissionLimits limits, Ti
         CreateMissionRequest request, CancellationToken cancellationToken = default)
     {
         MissionRequestValidator.Validate(request, limits);
-        var mission = MissionFactory.Create(request, time.GetUtcNow());
+        return await DispatchAsync(MissionFactory.Create(request, time.GetUtcNow()), cancellationToken);
+    }
 
+    /// <summary>Sends an already validated mission to the swarm and records it as the active one.</summary>
+    public async Task<Mission> DispatchAsync(Mission mission, CancellationToken cancellationToken = default)
+    {
         await bridge.DispatchMissionAsync(mission, cancellationToken);
 
         // A new mission replaces whatever the swarm was flying: the previous one did not
