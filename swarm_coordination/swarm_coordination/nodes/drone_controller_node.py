@@ -70,6 +70,7 @@ class DroneControllerNode(Node):
         self.declare_parameter("spawn_z", 0.0)
         self.declare_parameter("max_step_m", 2.0)
         self.declare_parameter("tolerance_m", 0.5)
+        self.declare_parameter("comms_timeout_s", 5.0)
         self._spawn = Vector3(
             float(self.get_parameter("spawn_x").value),
             float(self.get_parameter("spawn_y").value),
@@ -82,6 +83,7 @@ class DroneControllerNode(Node):
             max_step_m=float(self.get_parameter("max_step_m").value),
             warmup_ticks=int(CONTROL_RATE_HZ * 2),  # PX4 wants ~2 s of setpoints first
             retry_interval_s=1.0,
+            comms_timeout_s=float(self.get_parameter("comms_timeout_s").value),
         )
 
         self._position: Vector3 | None = None
@@ -90,6 +92,7 @@ class DroneControllerNode(Node):
         self._mode: str | None = None
         self._leader: str | None = None
         self._leader_position: Vector3 | None = None
+        self._leader_updated_s: float | None = None
         self._leader_subscriptions: list = []
         self._last_progress: str | None = None
 
@@ -178,6 +181,7 @@ class DroneControllerNode(Node):
         self._leader_subscriptions = []
         self._leader = leader
         self._leader_position = None
+        self._leader_updated_s = None
         if leader is None:
             return
         self._leader_subscriptions = [
@@ -191,6 +195,7 @@ class DroneControllerNode(Node):
 
     def _on_leader_pose(self, msg: PoseStamped) -> None:
         self._leader_position = _vector(msg)
+        self._leader_updated_s = self.get_clock().now().nanoseconds * 1e-9
 
     def _on_leader_progress(self, msg: String) -> None:
         try:
@@ -205,7 +210,12 @@ class DroneControllerNode(Node):
     def _on_tick(self) -> None:
         now = self.get_clock().now()
         out = self._controller.tick(
-            now.nanoseconds * 1e-9, self._position, self._armed, self._mode, self._leader_position
+            now.nanoseconds * 1e-9,
+            self._position,
+            self._armed,
+            self._mode,
+            self._leader_position,
+            self._leader_updated_s,
         )
         if out.setpoint is not None:
             local = world_to_local(out.setpoint, self._spawn, self._home_height or 0.0)

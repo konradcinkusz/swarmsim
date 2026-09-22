@@ -170,3 +170,68 @@ def test_a_new_assignment_takes_over_from_a_command():
 def test_an_empty_path_is_rejected():
     with pytest.raises(ValueError):
         DroneController("drone_1").assign_path(MISSION, [])
+
+
+def _follow(controller, pilot, ticks, leader_at, heard_at, start_s=0.0):
+    """Tick a follower; ``heard_at(t)`` is when the leader's position last arrived."""
+    for i in range(ticks):
+        now = start_s + i * 0.1
+        out = controller.tick(
+            now, pilot.position, pilot.armed, pilot.mode, leader_at(now), heard_at(now)
+        )
+        pilot.apply(out)
+
+
+def test_a_follower_holds_its_last_known_slot_while_the_leader_is_silent():
+    controller = DroneController("drone_2", warmup_ticks=1, comms_timeout_s=5.0)
+    pilot = ToyAutopilot(position=Vector3(0.0, 3.0, 0.0))
+    controller.assign_slot(MISSION, "drone_1", Vector3(-3.0, 0.0, 0.0))
+    last_heard = Vector3(10.0, 0.0, 5.0)
+
+    # Heard until t=2 s at (10, 0, 5); silent for the next 3 s (inside the timeout).
+    _follow(controller, pilot, 50, lambda t: last_heard, lambda t: min(t, 2.0))
+
+    assert pilot.position.distance_to(Vector3(7.0, 0.0, 5.0)) < 0.01
+    assert "AUTO.RTL" not in pilot.mode_requests
+
+
+def test_a_follower_resumes_when_the_leader_is_heard_again_within_the_timeout():
+    controller = DroneController("drone_2", warmup_ticks=1, comms_timeout_s=5.0)
+    pilot = ToyAutopilot(position=Vector3(0.0, 3.0, 0.0))
+    controller.assign_slot(MISSION, "drone_1", Vector3(-3.0, 0.0, 0.0))
+
+    def leader_at(t):
+        return Vector3(10.0 + t, 0.0, 5.0)
+
+    def heard_at(t):
+        return 2.0 if 2.0 <= t < 6.0 else t  # 4 s of silence, then back
+
+    _follow(controller, pilot, 150, leader_at, heard_at)
+
+    assert pilot.position.distance_to(leader_at(14.9) + Vector3(-3.0, 0.0, 0.0)) < 1.5
+    assert "AUTO.RTL" not in pilot.mode_requests
+
+
+def test_a_follower_goes_home_once_the_leader_is_silent_past_the_timeout_and_stays_gone():
+    controller = DroneController("drone_2", warmup_ticks=1, comms_timeout_s=5.0)
+    pilot = ToyAutopilot(position=Vector3(0.0, 3.0, 0.0))
+    controller.assign_slot(MISSION, "drone_1", Vector3(-3.0, 0.0, 0.0))
+
+    def heard_at(t):
+        return 2.0 if 2.0 <= t < 9.0 else t  # 7 s of silence, then back
+
+    _follow(controller, pilot, 120, lambda t: Vector3(10.0, 0.0, 5.0), heard_at)
+
+    assert pilot.mode_requests[-1] == "AUTO.RTL"
+    assert pilot.mode_requests.count("OFFBOARD") == 1  # never took the drone back
+    assert controller.progress.complete is False
+
+
+def test_a_drone_flying_its_own_path_is_not_subject_to_the_leader_timeout():
+    controller = DroneController("drone_1", warmup_ticks=1, comms_timeout_s=1.0)
+    pilot = ToyAutopilot()
+    controller.assign_path(MISSION, [Vector3(0.0, 0.0, 5.0)])
+
+    _follow(controller, pilot, 30, lambda t: None, lambda t: 0.0)
+
+    assert "AUTO.RTL" not in pilot.mode_requests
