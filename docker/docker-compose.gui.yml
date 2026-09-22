@@ -1,0 +1,16 @@
+# Opt-in Gazebo GUI, layered over docker-compose.yml:
+#
+#   xhost +local:docker        # Linux only: let the container use your X server
+#   docker compose -f docker-compose.yml -f docker-compose.gui.yml up --build
+#
+# Kept out of the base file because both mounts below fail on hosts that lack them (no
+# /dev/dri on a GPU-less server or on macOS), and the base file has to run anywhere.
+services:
+  sim:
+    environment:
+      - HEADLESS=0
+      - DISPLAY=${DISPLAY:?set DISPLAY (X11 or WSLg) before using the GUI override}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    devices:
+      - /dev/dri:/dev/dri

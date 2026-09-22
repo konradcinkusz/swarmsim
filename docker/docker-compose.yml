@@ -1,5 +1,10 @@
 name: swarmsim
 
+# The development composition root for the simulation stack (docs/adr/0002). Headless by
+# default: no GPU, no display, nothing on the host but Docker. For the Gazebo GUI, add
+# the override: `docker compose -f docker-compose.yml -f docker-compose.gui.yml up`.
+# Every variable below is optional — see .env.example next to this file.
+
 services:
   sim:
     build:
@@ -7,21 +12,29 @@ services:
       dockerfile: docker/Dockerfile.sim
     image: swarmsim/sim:local
     environment:
-      # 1 (default): Gazebo GUI, requires X11/Wayland passthrough — see the README's
-      # "GPU and headless mode" section. 0: headless server, no GPU/display needed.
+      # 1 (default): Gazebo server only — runs anywhere. 0: also start the Gazebo GUI,
+      # which needs the X11/GPU wiring in docker-compose.gui.yml.
       - HEADLESS=${HEADLESS:-1}
-      - DISPLAY=${DISPLAY:-}
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-    devices:
-      - /dev/dri:/dev/dri
+      # Spawn only the first N of simulation/px4-configs/drone_*.env (empty: all of them).
+      - SWARM_DRONE_COUNT=${SWARM_DRONE_COUNT:-}
     ports:
-      # rosbridge WebSocket — what SwarmApi.Infrastructure's RosBridgeSwarmStateProvider
+      # rosbridge WebSocket — what SwarmApi.Infrastructure's RosBridgeSwarmBridge
       # connects to (RosBridge__Url=ws://localhost:9090 from the host).
+      #
+      # PX4's MAVLink ports are deliberately NOT published: PX4 SITL sends MAVLink to
+      # the container's own localhost (UDP 14540+instance for offboard, 14550 for a
+      # GCS), so a mapping to the host never carried any traffic. Consoles are reached
+      # with `docker compose exec sim tmux attach -t drone_<n>` instead.
       - "9090:9090"
-      # PX4 MAVLink consoles / QGroundControl, one range per potential drone instance
-      # (M1: up to 5). commander takeoff (M0) is run inside the container's console.
-      - "14550-14559:14550-14559/udp"
+    healthcheck:
+      # Healthy = rosbridge accepts connections, which is what SwarmApi.Api needs before
+      # it decides Connected vs Simulated (docs/adr/0003). The generous start period
+      # covers Gazebo and PX4 coming up on a cold container.
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/9090"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 180s
     networks:
       - swarmsim-net
 
@@ -33,19 +46,24 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       # Container-to-container DNS name; unset entirely (or unreachable) and the API
-      # degrades to the in-memory simulated provider instead of failing to start — see
+      # degrades to the in-memory simulated bridge instead of failing to start — see
       # docs/adr/0003-rosbridge-degrade-pattern.md.
       - RosBridge__Url=ws://sim:9090
-      # Unset (default) keeps SwarmApi.Api in Open auth mode — exactly today's
-      # behavior, no token needed anywhere. Run with `--profile auth` and set
-      # SWARM_AUTH_AUTHORITY=http://authservice:8080 to require a bearer token on
-      # POST /api/missions instead — see docs/adr/0005-mcp-server-and-bearer-auth.md.
+      # Unset (default) keeps SwarmApi.Api in Open auth mode — no token needed anywhere.
+      # Run with `--profile auth` and set SWARM_AUTH_AUTHORITY=http://authservice:8080
+      # plus SWARM_AUTH_REQUIRE_HTTPS_METADATA=false (authservice serves plain http inside
+      # this network) to require a bearer token on POST /api/missions instead — see
+      # docs/adr/0005-mcp-server-and-bearer-auth.md.
       - Auth__Authority=${SWARM_AUTH_AUTHORITY:-}
       - Auth__Audience=SwarmApi
+      - Auth__RequireHttpsMetadata=${SWARM_AUTH_REQUIRE_HTTPS_METADATA:-true}
     ports:
       - "8080:8080"
     depends_on:
-      - sim
+      # Wait for rosbridge rather than merely for the container to exist: the API picks
+      # its bridge once at startup, and started too early it settles on Simulated.
+      sim:
+        condition: service_healthy
     networks:
       - swarmsim-net
 
@@ -60,6 +78,7 @@ services:
     environment:
       POSTGRES_DB: authservice
       POSTGRES_USER: postgres
+      # Local-only throwaway database inside this compose network; never published.
       POSTGRES_PASSWORD: postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]

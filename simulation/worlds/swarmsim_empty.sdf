@@ -1,20 +1,32 @@
 <?xml version="1.0" ?>
 <!--
-  M0's minimal world: a ground plane, a sun, and PX4's Gazebo (gz) plugins so a
-  spawned x500 can arm and take off. Kept intentionally empty beyond that — this is
-  the fundamentals-phase world; mission-specific obstacles/terrain are added later,
-  per-mission, not baked into the default world.
+  M0's minimal world: a ground plane, a sun, and the Gazebo systems PX4's gz_bridge
+  needs so a spawned x500 can arm and take off. Kept intentionally empty beyond that —
+  mission-specific obstacles/terrain are added per mission, not baked into this world.
+
+  The file name MUST match the world name below (`swarmsim_empty`): docker/entrypoint.sh
+  starts `gz sim` on "${PX4_GZ_WORLD}.sdf" and every PX4 instance's gz_bridge then
+  subscribes to /world/${PX4_GZ_WORLD}/..., so a mismatch leaves PX4 waiting for a
+  world that never appears. Physics runs at PX4's own default (4 ms step, 250 Hz,
+  matching IMU_INTEG_RATE) rather than 1 kHz, which would cost 4x the CPU for no
+  fidelity PX4 consumes — and CPU is all a GPU-less CI runner has.
 -->
 <sdf version="1.9">
   <world name="swarmsim_empty">
-    <physics name="1ms" type="ignored">
-      <max_step_size>0.001</max_step_size>
+    <physics name="4ms" type="ignored">
+      <max_step_size>0.004</max_step_size>
       <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
     </physics>
 
     <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
     <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
     <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+    <!-- Lets a scenario push a drone with a force/torque (wind gust, collision
+         impulse) at runtime without editing the model — see Tools/simulation/gz's
+         own default world, which ships the same system. -->
+    <plugin filename="gz-sim-apply-link-wrench-system" name="gz::sim::systems::ApplyLinkWrench"/>
     <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
       <render_engine>ogre2</render_engine>
     </plugin>

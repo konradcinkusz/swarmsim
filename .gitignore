@@ -1,7 +1,14 @@
 # --- Secrets -----------------------------------------------------------------
+# Named explicitly rather than as a blanket `*.env`: that pattern once swallowed
+# simulation/px4-configs/drone_<n>.env — committed configuration that happens to use
+# the extension — so a fresh clone had no drones to spawn and nothing said so. A local
+# secrets file is `.env`, `.env.<something>` or `*.secret.env`; nothing else is ignored
+# by extension alone. `.github/workflows/ci.yml` (job `simulation-config`) fails if the
+# drone configs ever go missing again.
 .env
-*.env
-!*.env.example
+.env.*
+!.env.example
+*.secret.env
 
 # --- .NET ----------------------------------------------------------------
 backend/**/bin/

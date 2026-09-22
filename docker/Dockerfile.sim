@@ -42,10 +42,12 @@ WORKDIR /opt/PX4-Autopilot
 RUN ./Tools/setup/ubuntu.sh --no-nuttx \
     && rm -rf /var/lib/apt/lists/*
 
-# Compiles px4_sitl against the Gazebo (gz) x500 target — the exact target the README's
-# M0 walkthrough runs by hand (`make px4_sitl gz_x500`), pre-built here so the container
-# starts in seconds instead of recompiling on every `docker compose up`.
-RUN make px4_sitl_default gz_x500
+# Compiles PX4 SITL only. Not `make px4_sitl_default gz_x500`: in PX4 v1.15, gz_x500 is
+# a custom *run* target (src/modules/simulation/gz_bridge/CMakeLists.txt runs the px4
+# binary with PX4_SIM_MODEL=gz_x500), so naming it here would start the simulation
+# inside `docker build` and never return. The airframe is chosen at run time instead,
+# by PX4_SIM_MODEL in simulation/px4-configs/x500_common.env.
+RUN make px4_sitl_default
 
 # ---------------------------------------------------------------------------
 FROM ros:humble-ros-base
@@ -77,7 +79,9 @@ COPY simulation/px4-configs /opt/swarmsim/px4-configs
 COPY docker/entrypoint.sh /opt/swarmsim/entrypoint.sh
 RUN chmod +x /opt/swarmsim/entrypoint.sh
 
-ENV HEADLESS=0
+# 1 = Gazebo server only (no GPU/display needed); 0 = also start the GUI. Interpreted
+# by entrypoint.sh, not by PX4 — PX4's own script treats any non-empty value as headless.
+ENV HEADLESS=1
 
 LABEL org.opencontainers.image.source="https://github.com/konradcinkusz/swarmsim"
 LABEL org.opencontainers.image.description="ROS 2 Humble + PX4 SITL + Gazebo Harmonic simulation environment for swarmsim"

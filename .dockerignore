@@ -1,0 +1,21 @@
+# Build context for docker/Dockerfile.sim is the repository root (docker-compose.yml:
+# `context: ..`). Exclusion-based, per architecture-standards REPO-BASELINE: anything an
+# image never COPYs stays out of the context, so a cold build does not upload the git
+# history, the .NET tree or local caches to the daemon.
+.git
+.github
+.claude
+docs
+site
+backend
+mcp_server
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.venv
+**/*.egg-info
+swarm_coordination/build
+swarm_coordination/install
+swarm_coordination/log
+docker/.env

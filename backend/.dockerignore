@@ -1,0 +1,9 @@
+# Build context for docker/Dockerfile.api is backend/. Exclusion-based (REPO-BASELINE):
+# local build output and the test projects never reach the image, so a `dotnet build`
+# on the host does not invalidate the restore layer or bloat the context.
+**/bin
+**/obj
+**/TestResults
+tests
+*.user
+.vs
