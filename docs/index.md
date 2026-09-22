@@ -70,5 +70,8 @@ unreachable is reported as `Disconnected`, never replaced by the simulated one. 
   meet that constitution, with the reasoning and the trigger to close it.
 - **[Decision records](adr/0001-simulation-stack-selection.md)** — one ADR per
   architectural choice, including the ones that depart from the standard on purpose.
+- **[Scenario study](research/scenario-study.md)** — what the scenario instrument found
+  when it flew the swarm through wind, comms loss, battery faults and ten drones, and
+  whether the scenarios would notice a regression.
 - **[Source on GitHub](https://github.com/konradcinkusz/swarmsim)** — code, issues, and
   the [README tutorial](https://github.com/konradcinkusz/swarmsim#readme).

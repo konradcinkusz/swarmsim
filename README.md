@@ -231,6 +231,34 @@ serves plain http, so pair `SWARM_AUTH_AUTHORITY=http://authservice:8080` with
 `SWARM_AUTH_REQUIRE_HTTPS_METADATA=false` (both in `docker/.env.example`); outside a
 private network, keep the https default.
 
+### Scenario testing
+
+[`scenarios/`](scenarios/README.md) holds swarm scenarios as YAML — a world (wind, GPS
+noise, batteries), a timeline of missions, operator commands and injected faults, and
+assertions over what happened. They fly against this repository's swarm software in a
+seeded kinematic simulation, in seconds and without ROS or Docker:
+
+```bash
+pip install pyyaml jsonschema
+PYTHONPATH=swarm_coordination python3 -m swarm_coordination.scenarios run scenarios --seeds 3 --mutants
+```
+
+`--mutants` also runs every scenario against deliberately broken versions of the swarm
+and fails if a scenario would not notice. The same check is a GitHub Action for any
+repository — it runs inside the calling job, nothing is sent anywhere:
+
+```yaml
+- uses: konradcinkusz/swarmsim@<ref>
+  with:
+    scenarios: scenarios
+    seeds: "3"
+```
+
+What the scenarios found so far is in the
+[scenario study](docs/research/scenario-study.md), and
+why the instrument is built this way in
+[ADR-0008](docs/adr/0008-scenario-instrument.md).
+
 ### MCP server
 
 [`mcp_server/`](mcp_server/README.md) exposes `get_swarm_status` and `start_mission` as
@@ -249,12 +277,14 @@ A longer walkthrough for verifying the whole platform end to end, not just the f
    cd swarmsim
 
    cd backend && dotnet test SwarmPlatform.sln && cd ..
-   cd swarm_coordination && pip install ruff pytest && ruff check . && pytest -v && cd ..
+   cd swarm_coordination && pip install ruff pytest jsonschema pyyaml && ruff check . && pytest -v && cd ..
    ```
 
-   Expect every suite green. This proves the waypoint/formation math, the scenario
-   library, mission validation, and the API's request/response and auth contract — all
-   without touching Gazebo.
+   Expect every suite green. This proves the flight logic, the mission supervisor, the
+   scenario instrument, mission validation, and the API's request/response and auth
+   contract — all without touching Gazebo. `PYTHONPATH=swarm_coordination python3 -m
+   swarm_coordination.scenarios run scenarios` then flies the ten scenarios in
+   `scenarios/` against the same code.
 
 2. **Run the API standalone** and confirm the P8 degrade path:
 
@@ -332,12 +362,14 @@ A longer walkthrough for verifying the whole platform end to end, not just the f
 | Path | What it is |
 |---|---|
 | `docker/` | Composition root for the simulation stack (Gazebo/PX4/ROS 2), its GUI override, the API's Dockerfile, a stub-based test of the entrypoint, and the SITL smoke test (`tests/sitl_smoke.py`) |
-| `contracts/` | The messages crossing rosbridge, as JSON Schema plus examples — both the .NET and the Python tests are held to them |
+| `contracts/` | The messages crossing rosbridge, and the scenario file format, as JSON Schema plus examples — both the .NET and the Python tests are held to them |
 | `simulation/` | Gazebo worlds, per-drone PX4 SITL configs |
-| `swarm_coordination/` | ROS 2 (ament_python) package: waypoint/formation logic + node adapters, and the scenario library (`swarm_coordination/scenarios/`) |
+| `swarm_coordination/` | ROS 2 (ament_python) package: flight logic, the mission supervisor and node adapters, and the scenario instrument (`swarm_coordination/scenarios/`: simulator, runner, mutants) |
+| `scenarios/` | Swarm scenarios as YAML, run on every push; see its README |
 | `backend/` | .NET solution: `SwarmApi.Domain/Application/Infrastructure/ServiceDefaults/Api` |
 | `mcp_server/` | MCP server exposing swarm-level tools over `SwarmApi.Api`'s REST surface — no ROS dependency |
-| `action.yml` | Proof-of-concept GitHub Action: submits a mission to a running `SwarmApi.Api` and polls its state |
+| `action.yml` | GitHub Action: runs swarm scenarios inside the calling job (`uses: konradcinkusz/swarmsim@<ref>`) |
+| `actions/mission-smoke/` | GitHub Action: submits a mission to a running `SwarmApi.Api` and polls its state |
 | `scripts/` | `setup.sh` (onboarding), `scan-secrets.sh` (local mirror of the CI secret scan), `hooks/pre-commit` |
 | `docs/adr/` | Architectural decision records |
 | `docs/architecture/` | Compliance checklist against `architecture-standards`, open deviations register |
@@ -379,7 +411,8 @@ connection — the same pure/adapter split as `swarm_coordination`.
 | Kind | Packages |
 |---|---|
 | Runtime (from the ROS 2 apt distro, not pip) | `rclpy`, `geometry_msgs`, `mavros_msgs`, `sensor_msgs`, `std_msgs`; `launch`, `launch_ros`, `mavros` to launch it (the sim image builds `mavros` and `mavros_msgs` from their release tags — see `docker/Dockerfile.sim`) |
-| Dev/test (pip) | `ruff`, `pytest`, `jsonschema` (the contract tests) |
+| Scenario runner (pip; not needed by the ROS nodes) | `pyyaml`, `jsonschema` |
+| Dev/test (pip) | `ruff`, `pytest`, plus the two above for the contract and scenario tests |
 
 The pure-logic modules (`trajectory.py`, `waypoints.py`, `formation.py`,
 `mission_planning.py`, `drone_controller.py`, `offboard.py`, `frames.py`, `px4_config.py`,
@@ -412,6 +445,9 @@ cd backend && dotnet test SwarmPlatform.sln
 # Python (swarm_coordination pure logic; no ROS 2 install required)
 cd swarm_coordination && ruff check . && pytest
 
+# Swarm scenarios (L0), with the mutation check
+PYTHONPATH=swarm_coordination python3 -m swarm_coordination.scenarios run scenarios --seeds 3 --mutants
+
 # Python (mcp_server; no `mcp` install required for the tested module)
 cd mcp_server && ruff check . && pytest
 
@@ -430,7 +466,9 @@ pip install mkdocs-material && mkdocs build --strict
 
 All of the above run in CI on every push and pull request (`.github/workflows/ci.yml`),
 along with Dockerfile linting (`hadolint`), an architecture test and size ceiling for the
-shared kernel, and secret scanning over the full git history (`gitleaks`). The SITL
+shared kernel, secret scanning over the full git history (`gitleaks`), the scenario suite
+run through the repository's own scenario action (pass and fail path both checked), and
+the mission smoke action against an API CI starts itself. The SITL
 smoke test (`.github/workflows/sim-smoke.yml`) builds the simulation image and flies it;
 it takes most of an hour cold, so it runs only when the image's inputs change, nightly
 and on demand.

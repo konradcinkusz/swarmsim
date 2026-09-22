@@ -57,6 +57,9 @@ nav:
       - "0005 · MCP server and bearer auth": adr/0005-mcp-server-and-bearer-auth.md
       - "0006 · Multi-tenant isolation model": adr/0006-multi-tenant-isolation-model.md
       - "0007 · Deployment target": adr/0007-deployment-target.md
+      - "0008 · Scenario instrument": adr/0008-scenario-instrument.md
+  - Research:
+      - "Scenario study": research/scenario-study.md
 
 # `--strict` (used in CI) turns a broken internal link into a build failure instead
 # of a silently wrong page — REPO-BASELINE's "test configs rot" rule applied to docs.

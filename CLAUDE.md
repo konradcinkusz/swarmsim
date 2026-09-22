@@ -27,7 +27,9 @@ reasoning; check there before assuming a gap is accidental.
 | `docker/` | Composition root for the simulation stack (Gazebo/PX4/ROS 2), GUI override, entrypoint + its stub test, SITL smoke test (`tests/sitl_smoke.py`) | `docker compose`, `shellcheck` |
 | `simulation/` | Gazebo worlds (file name = world name), PX4 per-drone configs (committed, not secrets) | — |
 | `swarm_coordination/` | ROS 2 ament_python package: per-drone controller, mission dispatcher, state aggregator — pure logic + thin MAVROS node adapters | `colcon`, `pytest`, `ruff` |
-| `contracts/` | JSON Schemas + examples for every message crossing rosbridge; both test suites are held to them | `jsonschema` (Python tests) |
+| `contracts/` | JSON Schemas + examples for every message crossing rosbridge, and the scenario file format | `jsonschema` (Python tests) |
+| `scenarios/` | Swarm scenarios (YAML) run in L0 on every push, with the mutation check | `python -m swarm_coordination.scenarios` |
+| `action.yml`, `actions/mission-smoke/` | GitHub Actions: the scenario check (runs in the caller's job), the running-API smoke test | composite actions |
 | `backend/` | .NET solution: `SwarmApi.Domain/Application/Infrastructure/ServiceDefaults/Api` | `dotnet` |
 | `mcp_server/` | MCP server: swarm-level tools over `SwarmApi.Api`'s REST surface, no ROS dependency | `pytest`, `ruff` |
 | `docs/adr/` | One decision record per architectural choice | — |
@@ -48,6 +50,12 @@ reasoning; check there before assuming a gap is accidental.
   local frame (`frames.py`: spawn offset horizontally, PX4's home vertically). A new
   MAVROS topic or service needs its plugin in `px4_config.MAVROS_PLUGINS`, or MAVROS
   never serves it.
+- Changing flight or swarm behaviour (anything the ROS nodes decide): the scenarios in
+  `scenarios/` fly the same modules in L0 (`swarm_coordination/scenarios/`, ADR-0008).
+  Run them with `--mutants`. A new behaviour needs a scenario that fails without it and
+  a mutant in `scenarios/mutants.py` that proves so; a policy lives in product code
+  (`supervisor.py`, `drone_controller.py`), never only inside a scenario. A known gap is
+  written down as `expect: fail` with a reason, not deleted.
 - Changing a message that crosses rosbridge (`/swarm/mission`, `/swarm/command`,
   `/swarm/state`): change `contracts/rosbridge/` first — schema and example — then both
   sides (`RosBridgeProtocol.cs`, `mission_planning.py` / `swarm_state.py`). Both test
@@ -86,8 +94,11 @@ reasoning; check there before assuming a gap is accidental.
 - `.NET`: `dotnet test backend/SwarmPlatform.sln`. On an Ubuntu 24.04 sandbox whose
   network policy blocks Microsoft's download hosts, `apt-get install dotnet-sdk-8.0`
   (Ubuntu's own archive) usually still works; otherwise let CI run it.
-- Python: `cd swarm_coordination && ruff check . && pytest` (`pip install jsonschema` too,
-  or the contract tests skip — CI installs it).
+- Python: `cd swarm_coordination && ruff check . && pytest` (`pip install jsonschema pyyaml`
+  too, or the contract and scenario tests skip — CI installs both).
+- Scenarios: `PYTHONPATH=swarm_coordination python3 -m swarm_coordination.scenarios run
+  scenarios --seeds 3 --mutants` (seconds; exit 0 only if every scenario met its
+  expectation and every mutant was caught).
 - MCP server: `cd mcp_server && ruff check . && pytest` (no `mcp` install needed — only
   `swarm_client.py` is exercised).
 - Simulation config: `docker compose -f docker/docker-compose.yml config -q` (and
