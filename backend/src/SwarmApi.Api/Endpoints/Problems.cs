@@ -18,6 +18,9 @@ internal static class Problems
     public static IResult ApprovalRefused(ApprovalRefusedException ex) =>
         Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden, title: "Approval refused");
 
+    public static IResult ScenarioRunValidation(ScenarioRunValidationException ex) =>
+        Results.ValidationProblem(new Dictionary<string, string[]> { ["report"] = [.. ex.Errors] });
+
     public static IResult SwarmUnavailable(SwarmUnavailableException ex) =>
         Results.Problem(ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable, title: "Swarm unavailable");
 }

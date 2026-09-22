@@ -154,8 +154,12 @@ def _verdict_dict(verdict: Verdict) -> dict:
     }
 
 
+REPORT_VERSION = 1  # contracts/scenario/report.v1.schema.json
+
+
 def to_json(report: SuiteReport) -> dict:
     return {
+        "version": REPORT_VERSION,
         "sut": report.sut,
         "seeds": report.seeds,
         "ok": report.ok,

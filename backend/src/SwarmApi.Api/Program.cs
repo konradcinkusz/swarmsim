@@ -1,12 +1,13 @@
 using System.Text.Json.Serialization;
 using SwarmApi.Api;
 using SwarmApi.Api.Endpoints;
+using SwarmApi.Application;
 using SwarmApi.Infrastructure;
 using SwarmApi.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.AddServiceDefaults();
+builder.AddServiceDefaults(SwarmTelemetry.Name);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -14,13 +15,14 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 // Bootstrap logger for the decisions made before the DI container exists: which
-// ISwarmBridge to register and which auth mode to run in. The app's own logging takes
-// over for everything after builder.Build().
+// ISwarmBridge to register, which auth mode to run in, where scenario runs are kept.
+// The app's own logging takes over for everything after builder.Build().
 using (var bootstrapLoggerFactory = LoggerFactory.Create(logging => logging.AddConsole()))
 {
     var bootstrapLogger = bootstrapLoggerFactory.CreateLogger("Startup");
     builder.Services.AddSwarmBridge(builder.Configuration, bootstrapLogger);
     builder.Services.AddSwarmAuthentication(builder.Configuration, bootstrapLogger);
+    builder.Services.AddScenarioRunStore(builder.Configuration, bootstrapLogger);
 }
 
 builder.Services.AddSwarmMissions(builder.Configuration);
@@ -39,6 +41,7 @@ app.UseAuthorization();
 app.MapDefaultEndpoints();
 app.MapMissionEndpoints();
 app.MapMissionPlanEndpoints();
+app.MapScenarioRunEndpoints();
 app.MapSwarmEndpoints();
 
 app.Run();

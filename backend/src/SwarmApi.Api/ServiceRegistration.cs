@@ -29,15 +29,18 @@ public static class ServiceRegistration
             planning,
             sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton(sp => new IdempotencyStore(sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new ScenarioRunService(
+            sp.GetRequiredService<IScenarioRunStore>(), sp.GetRequiredService<TimeProvider>()));
         return services;
     }
 
-    /// <summary>The health checks <c>/health</c> reports: which bridge and auth mode are live (P8).</summary>
+    /// <summary>The health checks <c>/health</c> reports: which bridge, auth mode and run store are live (P8).</summary>
     public static IServiceCollection AddSwarmHealthChecks(this IServiceCollection services)
     {
         services.AddHealthChecks()
             .AddCheck<SwarmBridgeHealthCheck>("swarm_bridge", tags: ["live"])
-            .AddCheck<AuthHealthCheck>("auth", tags: ["live"]);
+            .AddCheck<AuthHealthCheck>("auth", tags: ["live"])
+            .AddCheck<ScenarioRunStoreHealthCheck>("scenario_runs", tags: ["live"]);
         return services;
     }
 }

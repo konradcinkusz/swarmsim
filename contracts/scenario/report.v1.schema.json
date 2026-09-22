@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/konradcinkusz/swarmsim/contracts/scenario/report.v1.schema.json",
+  "title": "swarmsim scenario suite report (v1)",
+  "description": "What `python -m swarm_coordination.scenarios run --json` writes, and what SwarmApi.Api's POST /api/scenario-runs stores: every scenario's outcome, every seed's assertions with the value they measured, and the mutation check when it ran. Produced by swarm_coordination/scenarios/runner.py (to_json); read by SwarmApi.Application's ScenarioReport. Both test suites hold themselves to examples/report.json.",
+  "type": "object",
+  "required": ["version", "sut", "seeds", "ok", "counts", "errors", "scenarios", "mutation"],
+  "properties": {
+    "version": { "const": 1 },
+    "sut": {
+      "description": "The system under test: `reference` for this repository's swarm, else the `--sut module:attribute` it was given.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "seeds": { "type": "array", "items": { "type": "integer" }, "minItems": 1, "maxItems": 1000 },
+    "ok": {
+      "description": "The suite's verdict: no error, every scenario met its expectation, no toothless scenario, no surviving mutant.",
+      "type": "boolean"
+    },
+    "counts": {
+      "type": "object",
+      "required": ["passed", "failed", "xfail", "xpass"],
+      "properties": {
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "xfail": { "type": "integer", "minimum": 0 },
+        "xpass": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "errors": {
+      "description": "Scenario files that could not be loaded, with why.",
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 1000
+    },
+    "scenarios": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "required": ["name", "source", "description", "expect", "expect_reason", "outcome", "killed_mutants", "runs"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "source": { "type": ["string", "null"] },
+          "description": { "type": "string" },
+          "expect": { "enum": ["pass", "fail"] },
+          "expect_reason": { "type": ["string", "null"] },
+          "outcome": {
+            "description": "passed / failed for an `expect: pass` scenario; xfail (failed as expected) / xpass (passed although expected to fail) for `expect: fail`.",
+            "enum": ["passed", "failed", "xfail", "xpass"]
+          },
+          "killed_mutants": {
+            "description": "The mutants this scenario caught; null when the mutation check did not run for it.",
+            "type": ["array", "null"],
+            "items": { "type": "string" }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["seed", "passed", "wall_time_s", "assertions"],
+              "properties": {
+                "seed": { "type": "integer" },
+                "passed": { "type": "boolean" },
+                "wall_time_s": { "type": "number", "minimum": 0 },
+                "assertions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["assertion", "passed", "measured", "unit", "violations"],
+                    "properties": {
+                      "assertion": { "type": "string" },
+                      "passed": { "type": "boolean" },
+                      "measured": {
+                        "description": "What the assertion measured (closest approach, completion time, …); null when it measures nothing on its own.",
+                        "type": ["number", "null"]
+                      },
+                      "unit": { "type": ["string", "null"] },
+                      "violations": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": ["drones", "t_s", "measured", "threshold", "description"],
+                          "properties": {
+                            "drones": { "type": "array", "items": { "type": "string" } },
+                            "t_s": { "type": ["number", "null"] },
+                            "measured": { "type": ["number", "null"] },
+                            "threshold": { "type": ["number", "null"] },
+                            "description": { "type": "string" }
+                          },
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "mutation": {
+      "description": "The mutation check; null when the suite ran without --mutants.",
+      "type": ["object", "null"],
+      "required": ["mutants", "survivors", "toothless_scenarios"],
+      "properties": {
+        "mutants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "breaks"],
+            "properties": { "name": { "type": "string" }, "breaks": { "type": "string" } },
+            "additionalProperties": false
+          }
+        },
+        "survivors": { "type": "array", "items": { "type": "string" } },
+        "toothless_scenarios": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

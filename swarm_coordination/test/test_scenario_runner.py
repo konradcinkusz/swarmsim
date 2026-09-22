@@ -201,6 +201,34 @@ def test_junit_and_json_reports_describe_the_same_run(tmp_path):
     assert runs[0]["assertions"][0]["violations"][0]["threshold"] == 5.0
 
 
+def test_the_json_report_is_the_report_contract_and_the_example_is_current(tmp_path):
+    schema = json.loads((ROOT / "contracts" / "scenario" / "report.v1.schema.json").read_text())
+    example = json.loads((ROOT / "contracts" / "scenario" / "examples" / "report.json").read_text())
+    report = runner.run_suite(
+        [SCENARIOS / "waypoint_lanes.yaml", SCENARIOS / "v_formation_from_pads.yaml"],
+        ReferenceSwarm(),
+        [1, 2],
+        mutation=True,
+    )
+
+    document = runner.to_json(report)
+
+    jsonschema.validate(document, schema, cls=jsonschema.Draft202012Validator)
+    jsonschema.validate(example, schema, cls=jsonschema.Draft202012Validator)
+    # The example SwarmApi.Api's tests ingest is what this runner writes today, not a
+    # hand-edited file: same scenarios, outcomes and measurements.
+    assert _without_wall_times(document) == _without_wall_times(example)
+
+
+def _without_wall_times(document: dict) -> dict:
+    document = copy.deepcopy(document)
+    for scenario in document["scenarios"]:
+        scenario["source"] = Path(scenario["source"]).name if scenario["source"] else None
+        for run in scenario["runs"]:
+            run.pop("wall_time_s")
+    return document
+
+
 def test_the_command_line_exit_status_follows_the_outcome(tmp_path, capsys):
     junit = tmp_path / "out" / "results.xml"
     summary = tmp_path / "summary.md"
