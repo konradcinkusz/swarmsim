@@ -1,9 +1,11 @@
 [project]
 name = "mcp-server-swarmsim"
 version = "0.1.0"
-description = "MCP server exposing swarm-level tools (get_swarm_status, start_mission) over SwarmApi.Api's existing REST surface."
+description = "MCP server exposing swarm-level tools over SwarmApi.Api's REST surface, behind a human approval gate for anything that flies."
 requires-python = ">=3.10"
-dependencies = ["mcp>=1.2.0"]
+# mcp 2.x renamed FastMCP to MCPServer; the 1.x API this server was first written against
+# would not even import under a fresh `pip install` of the old ">=1.2.0" range.
+dependencies = ["mcp>=2.2,<3"]
 
 [build-system]
 requires = ["setuptools>=68"]
