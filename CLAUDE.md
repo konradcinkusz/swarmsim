@@ -33,6 +33,7 @@ reasoning; check there before assuming a gap is accidental.
 | `backend/` | .NET solution: `SwarmApi.Domain/Application/Infrastructure/ServiceDefaults/Api` | `dotnet` |
 | `mcp_server/` | MCP server: swarm-level tools over `SwarmApi.Api`'s REST surface, no ROS dependency; `BEHAVIOUR.md` is its normative tool table | `pytest`, `ruff` |
 | `e2e/` | The dashboard in a real browser (Playwright, Chromium) against a running API | `pytest`, `playwright` |
+| `flyio/` | `swarmsim-api`'s Fly.io config, its secrets list and cost reasoning; deployed only by `.github/workflows/flyio.yml` from a `v*` tag | `flyctl` (in CI) |
 | `docs/adr/` | One decision record per architectural choice | — |
 | `docs/architecture/` | This repo's compliance checklist and deviation register | — |
 | `scripts/` | `setup.sh` (onboarding + pre-commit hook), `scan-secrets.sh` (CI secret scan, locally) | `bash`, `gitleaks` |
@@ -66,7 +67,8 @@ reasoning; check there before assuming a gap is accidental.
   A new integration (a second bridge transport, a persistence store) is an interface in
   `SwarmApi.Application` plus a DI registration, not a base class.
 - Adding or changing an endpoint: give it a row in `docs/architecture/API-SURFACE.md`
-  first — its class (read, plan, approval, gated-write, write, safety-write), whether
+  first — its class (read, private-read, record, plan, approval, gated-write, write,
+  safety-write), whether
   Enforced mode lets it through without a token, whether it honours `Idempotency-Key`
   (every POST does: `.WithIdempotency()`). `ApiSurfaceTests` fails on an endpoint without
   a row or one that disagrees with it. Nothing that makes drones fly may be reachable by
@@ -87,6 +89,18 @@ reasoning; check there before assuming a gap is accidental.
   in the image or an airframe copy.
 - Adding to `.gitignore`: name the files, not an extension. `*.env` once hid the
   committed drone configs in `simulation/px4-configs/`.
+- Changing the scenario report (`runner.to_json`): it is a contract,
+  `contracts/scenario/report.v1.schema.json`, that `SwarmApi.Api` stores and compares.
+  Change the schema, regenerate the example from the repository root —
+  `PYTHONPATH=swarm_coordination python3 -m swarm_coordination.scenarios run
+  scenarios/waypoint_lanes.yaml scenarios/v_formation_from_pads.yaml --seeds 2 --mutants
+  --json contracts/scenario/examples/report.json` (exit 1 is expected: two scenarios
+  leave mutants alive) — and keep the C# records in `ScenarioRunContracts.cs` in step;
+  both suites read the example, and a test fails if it is stale.
+- Telemetry: spans and counters go through `SwarmTelemetry` (BCL `ActivitySource`/`Meter`,
+  no package), and every metric tag comes from a bounded set — never an id
+  (`SwarmTelemetryTests` checks). OpenTelemetry packages stay in `SwarmApi.ServiceDefaults`
+  (docs/adr/0010).
 - Any new external dependency (a second bridge transport, a cloud API) needs a working
   fallback per P8, following the pattern in
   `docs/adr/0003-rosbridge-degrade-pattern.md`. `SwarmApi.Api`'s bearer auth against

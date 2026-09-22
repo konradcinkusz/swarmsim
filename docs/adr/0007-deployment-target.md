@@ -114,3 +114,21 @@ not a platform split and not an "it depends."
 Worked example: `docker/docker-compose.yml`,
 `swarm_coordination/swarm_coordination/scenarios/`,
 `docs/adr/0004-ci-scope-for-simulation-stack.md`.
+
+## Amendment — 2026-09-22: Fly.io has no GPUs any more, and the simulator does not need one
+
+- **Fly.io GPU Machines are gone.** They were deprecated as of 31 July 2026 and unavailable
+  from 1 August 2026. The source is Fly's community announcement, "GPU migration — Fly.io
+  GPUs will be deprecated as of July 31, 2026" (community.fly.io, thread 27110). It was
+  found by web search on 2026-09-22; the pages themselves were not reachable from where
+  this was written. The `swarmsim-sim` unit above, "Fly.io GPU Machines", cannot be built
+  as decided.
+- **It does not have to be.** The SITL smoke (`.github/workflows/sim-smoke.yml`) runs the
+  headless stack on a stock 4-vCPU GitHub runner with no GPU: Gazebo, three PX4 instances,
+  MAVROS and the ROS 2 side. The CPU snapshot taken after the flight shows the machine
+  about half idle. The premise above, "GPU/X11 dependent", holds only for the optional GUI.
+- **So `swarmsim-sim` moves to CPU Machines**, per tenant run, still on Fly.io and still
+  never standing. How runs are created and torn down, and the private-cloud alternative,
+  are in [ADR-0012](0012-tenant-run-orchestrator.md). The platform choice for
+  `swarmsim-api` is unchanged, and its deployment is written
+  ([ADR-0011](0011-hosted-api-and-run-store.md)).

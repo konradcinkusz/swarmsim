@@ -32,7 +32,7 @@ flowchart TB
 
     subgraph Api[".NET — SwarmApi"]
         Ep["Api: endpoints (transport only)"]
-        App["Application: MissionService · MissionPlanService<br/>validate · plan · approve · dispatch · abort · land"]
+        App["Application: MissionService · MissionPlanService · ScenarioRunService<br/>validate · plan · approve · dispatch · abort · land · store runs"]
         Dom["Domain: Mission, SwarmState, Trajectory, Formation"]
         Bridge["Infrastructure: ISwarmBridge<br/>RosBridgeSwarmBridge (real, reconnecting) /<br/>SimulatedSwarmBridge (no URL configured)"]
         Ep --> App --> Bridge
@@ -293,6 +293,27 @@ What the scenarios found so far is in the
 why the instrument is built this way in
 [ADR-0008](docs/adr/0008-scenario-instrument.md).
 
+**Keeping and comparing runs.** The verdict is made in your job. To also remember it,
+store the report in a `SwarmApi.Api`, then list runs and compare two:
+
+```bash
+PYTHONPATH=swarm_coordination python3 -m swarm_coordination.scenarios run scenarios \
+    --upload http://localhost:5000 --label "$(git rev-parse --short HEAD)"
+curl -s http://localhost:5000/api/scenario-runs | jq '.[] | {id, label, ok, counts}'
+curl -s "http://localhost:5000/api/scenario-runs/compare?base=<id>&head=<id>" \
+    | jq '.scenarios[] | select(.change != "unchanged")'
+```
+
+The comparison says, per scenario: regressed, fixed, changed, unchanged, added or
+removed. It also shows how each measured value moved, averaged over the seeds, and which
+mutants started or stopped surviving. The Action does the same with `upload-url` and
+`upload-token`.
+
+- A failed upload is a warning; it never fails the check.
+- The report format is a contract: `contracts/scenario/report.v1.schema.json`.
+- Runs are kept in memory unless `ScenarioRuns__Directory` names a directory
+  ([ADR-0011](docs/adr/0011-hosted-api-and-run-store.md)).
+
 ### MCP server
 
 [`mcp_server/`](mcp_server/README.md) gives an agent (Claude, or any MCP client)
@@ -413,11 +434,14 @@ A longer walkthrough for verifying the whole platform end to end, not just the f
 | `scenarios/` | Swarm scenarios as YAML, run on every push; see its README |
 | `backend/` | .NET solution: `SwarmApi.Domain/Application/Infrastructure/ServiceDefaults/Api` |
 | `mcp_server/` | MCP server exposing swarm-level tools over `SwarmApi.Api`'s REST surface — no ROS dependency |
+| `e2e/` | The dashboard in a real browser (Playwright) against a running API |
+| `flyio/` | The Fly.io config for `swarmsim-api`, what its secrets are, and its cost reasoning |
 | `action.yml` | GitHub Action: runs swarm scenarios inside the calling job (`uses: konradcinkusz/swarmsim@<ref>`) |
 | `actions/mission-smoke/` | GitHub Action: submits a mission to a running `SwarmApi.Api` and polls its state |
 | `scripts/` | `setup.sh` (onboarding), `scan-secrets.sh` (local mirror of the CI secret scan), `hooks/pre-commit` |
 | `docs/adr/` | Architectural decision records |
-| `docs/architecture/` | Compliance checklist against `architecture-standards`, open deviations register |
+| `docs/architecture/` | Compliance checklist against `architecture-standards`, open deviations register, the API surface table |
+| `docs/PROMOTION.md` | The written test for moving this project from lab to product |
 | `mkdocs.yml`, `docs/index.md` | Source for the [docs site](https://konradcinkusz.github.io/swarmsim/) (built by `.github/workflows/pages.yml`) |
 
 ## Packages and dependencies
@@ -432,14 +456,19 @@ reviewer can ask about (`architecture-standards` REPO-BASELINE §4b).
 | `SwarmApi.Domain` | 0 | Pure C#, no packages |
 | `SwarmApi.Application` | 0 | Pure C#, no packages |
 | `SwarmApi.Infrastructure` | 1 | `FrameworkReference: Microsoft.AspNetCore.App` for DI/Config/Logging abstractions + `System.Net.WebSockets` (BCL), plus `Microsoft.AspNetCore.Authentication.JwtBearer` (see below) |
-| `SwarmApi.ServiceDefaults` | 0 (packages) | Same `FrameworkReference` as above |
+| `SwarmApi.ServiceDefaults` | 4 | Same `FrameworkReference` as above, plus OpenTelemetry: `OpenTelemetry.Extensions.Hosting`, `.Exporter.OpenTelemetryProtocol`, `.Instrumentation.AspNetCore`, `.Instrumentation.Runtime` (see below) |
 | `SwarmApi.Api` | 0 | ASP.NET Core minimal APIs only |
 | Test projects (×4) | 6 shared | `Microsoft.NET.Test.Sdk`, `xunit`, `xunit.runner.visualstudio`, `Microsoft.AspNetCore.Mvc.Testing`, `Microsoft.AspNetCore.TestHost` (an in-process rosbridge stand-in), `coverlet.collector` — test tooling only |
 
-Runtime code ships **one third-party NuGet package**, a deliberate, recorded exception —
-[`docs/adr/0005-mcp-server-and-bearer-auth.md`](docs/adr/0005-mcp-server-and-bearer-auth.md).
+Runtime code ships **two recorded exceptions** to "no third-party packages":
+- JWT bearer validation —
+  [`docs/adr/0005-mcp-server-and-bearer-auth.md`](docs/adr/0005-mcp-server-and-bearer-auth.md);
+- OpenTelemetry, in the shared kernel only —
+  [`docs/adr/0010-opentelemetry.md`](docs/adr/0010-opentelemetry.md).
+
 Everything else (minimal APIs, `System.Net.WebSockets.ClientWebSocket`, health checks,
-`System.Text.Json`) is in the ASP.NET Core shared framework or the BCL.
+`System.Text.Json`, `ActivitySource`/`Meter`) is in the ASP.NET Core shared framework or
+the BCL.
 
 **`mcp_server/` (Python, `pyproject.toml`):**
 
@@ -475,15 +504,33 @@ CI test them with just `pip install ruff pytest jsonschema`.
 | `ros:humble-ros-base` | `docker/Dockerfile.sim` (both stages) |
 | `mcr.microsoft.com/dotnet/sdk:10.0` → `mcr.microsoft.com/dotnet/aspnet:8.0` | `docker/Dockerfile.api` (multi-stage: the newer SDK builds the `net8.0` target; the runtime major matches the TFM, per P6) |
 
-## Releases
+## Releases and deployment
 
-Releases are built by `.github/workflows/release.yml` when a `vX.Y.Z` tag is pushed —
-release notes are generated from merged PRs since the previous tag. **No tag has been cut
-yet**, so there is no release and no release badge; the first one is due once the
-simulation stack has been verified by an actual run. There is no
-deployed environment yet (see `docs/architecture/DEVIATIONS.md` — no Fly.io/Azure
-target is part of this phase); a "release" here means a stable point in this repository's
-history, not a shipped artifact.
+A `vX.Y.Z` tag does two things.
+
+- **`release.yml`** creates a GitHub Release, with notes generated from the merged PRs
+  since the previous tag.
+- **`flyio.yml`** deploys `swarmsim-api` to Fly.io
+  ([ADR-0011](docs/adr/0011-hosted-api-and-run-store.md)):
+  1. the tests;
+  2. change detection against the previous tag;
+  3. one image, built and pushed to registry.fly.io;
+  4. the deploy, then a check that `/health` says `Enforced` and `File`.
+
+  The hosted API refuses to run without an auth authority (`Auth__Required`), so a
+  deploy needs the one-time setup in [`flyio/SECRETS.md`](flyio/SECRETS.md): a
+  `FLY_API_TOKEN` and an `authservice` to name. Without the token the workflow deploys
+  nothing and says so. Cost and topology: [`flyio/INFRASTRUCTURE-ANALYSIS.md`](flyio/INFRASTRUCTURE-ANALYSIS.md).
+
+**No tag has been cut and nothing is deployed yet.** The simulator itself is never a
+standing deployment. Tenant runs are designed, not built, in
+[ADR-0012](docs/adr/0012-tenant-run-orchestrator.md); building them waits on the
+[promotion test](docs/PROMOTION.md).
+
+**Observability.** The API emits OpenTelemetry traces, metrics and logs. Set
+`OTEL_EXPORTER_OTLP_ENDPOINT` (and the other standard `OTEL_EXPORTER_OTLP_*` variables)
+to export them; unset, nothing leaves the process, and `/health` says `telemetry: Off`
+([ADR-0010](docs/adr/0010-opentelemetry.md)).
 
 ## Development
 
