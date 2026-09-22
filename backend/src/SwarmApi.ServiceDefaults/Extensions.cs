@@ -52,16 +52,17 @@ public static class Extensions
     /// <summary>Maps <c>/health</c> (readiness — every registered check) and <c>/alive</c> (liveness — `live`-tagged only).</summary>
     public static WebApplication MapDefaultEndpoints(this WebApplication app)
     {
+        // Probes never carry a token: both stay reachable whatever a service's auth policy is.
         app.MapHealthChecks("/health", new HealthCheckOptions
         {
             ResponseWriter = WriteHealthResponseAsync,
-        });
+        }).AllowAnonymous();
 
         app.MapHealthChecks("/alive", new HealthCheckOptions
         {
             Predicate = check => check.Tags.Contains("live"),
             ResponseWriter = WriteHealthResponseAsync,
-        });
+        }).AllowAnonymous();
 
         return app;
     }

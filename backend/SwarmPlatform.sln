@@ -1,4 +1,4 @@
-
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -18,6 +18,10 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SwarmApi.Application.Tests", "tests\SwarmApi.Application.Tests\SwarmApi.Application.Tests.csproj", "{A1000000-0000-0000-0000-000000000007}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SwarmApi.Api.Tests", "tests\SwarmApi.Api.Tests\SwarmApi.Api.Tests.csproj", "{A1000000-0000-0000-0000-000000000008}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{316C55A0-8580-4C54-BC5E-91F739F51C45}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SwarmApi.Infrastructure.Tests", "tests\SwarmApi.Infrastructure.Tests\SwarmApi.Infrastructure.Tests.csproj", "{8B2D1EAA-5E09-4E85-A747-5351DF327C94}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -57,8 +61,15 @@ Global
 		{A1000000-0000-0000-0000-000000000008}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A1000000-0000-0000-0000-000000000008}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A1000000-0000-0000-0000-000000000008}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8B2D1EAA-5E09-4E85-A747-5351DF327C94}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8B2D1EAA-5E09-4E85-A747-5351DF327C94}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8B2D1EAA-5E09-4E85-A747-5351DF327C94}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8B2D1EAA-5E09-4E85-A747-5351DF327C94}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{8B2D1EAA-5E09-4E85-A747-5351DF327C94} = {316C55A0-8580-4C54-BC5E-91F739F51C45}
 	EndGlobalSection
 EndGlobal

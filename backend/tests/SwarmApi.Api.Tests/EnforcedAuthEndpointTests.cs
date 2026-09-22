@@ -72,4 +72,46 @@ public class EnforcedAuthEndpointTests
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
+
+    [Fact]
+    public async Task Every_write_requires_a_token_by_default()
+    {
+        using var factory = Factory("https://authservice.invalid");
+        var client = factory.CreateClient();
+
+        var abort = await client.PostAsync($"/api/missions/{Guid.NewGuid()}/abort", content: null);
+        var land = await client.PostAsync("/api/swarm/land", content: null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, abort.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, land.StatusCode);
+    }
+
+    [Fact]
+    public async Task The_open_list_stays_open_the_dashboard_mission_reads_and_probes()
+    {
+        using var factory = Factory("https://authservice.invalid");
+        var client = factory.CreateClient();
+
+        var dashboard = await client.GetAsync("/");
+        var script = await client.GetAsync("/app.js");
+        var mission = await client.GetAsync($"/api/missions/{Guid.NewGuid()}");
+        var alive = await client.GetAsync("/alive");
+
+        Assert.Equal(HttpStatusCode.OK, dashboard.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, script.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, mission.StatusCode); // reached the handler, not stopped at 401
+        Assert.Equal(HttpStatusCode.OK, alive.StatusCode);
+    }
+
+    [Fact]
+    public async Task An_endpoint_nobody_opened_is_protected()
+    {
+        using var factory = Factory("https://authservice.invalid");
+        var client = factory.CreateClient();
+
+        // No such route: under deny-by-default the fallback policy still answers first.
+        var response = await client.GetAsync("/api/not-a-route");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
 }

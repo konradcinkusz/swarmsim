@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "frame": "world_enu",
+  "mission": { "id": "3f2b6c1e-8a4d-4b7e-9c2a-1d5e8f7a9b0c", "complete": false },
+  "drones": [
+    {
+      "id": "drone_1",
+      "x": 4.2, "y": 0.1, "z": 5.0,
+      "armed": true, "mode": "OFFBOARD", "battery_pct": 87.5, "age_s": 0.12,
+      "waypoint_index": 1, "waypoint_count": 2
+    },
+    {
+      "id": "drone_2",
+      "x": 1.7, "y": 2.6, "z": 4.9,
+      "armed": true, "mode": "AUTO.RTL", "battery_pct": null, "age_s": 0.08,
+      "waypoint_index": null, "waypoint_count": null
+    },
+    {
+      "id": "drone_3",
+      "x": 0.0, "y": 6.0, "z": 0.0,
+      "armed": false, "mode": "AUTO.LOITER"
+    }
+  ]
+}

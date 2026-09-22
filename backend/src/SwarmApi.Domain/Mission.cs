@@ -14,5 +14,13 @@ public sealed class Mission
 
     public double SpacingMeters { get; init; } = 2.0;
 
+    /// <summary>Follower layout for <see cref="MissionType.LeaderFollowerFormation"/>; ignored for waypoint missions.</summary>
+    public FormationShape Formation { get; init; } = FormationShape.Line;
+
     public required DateTimeOffset CreatedAtUtc { get; init; }
+
+    public MissionStatus Status { get; set; } = MissionStatus.Active;
+
+    /// <summary>When the mission stopped being <see cref="MissionStatus.Active"/>; null while it still is.</summary>
+    public DateTimeOffset? EndedAtUtc { get; set; }
 }
