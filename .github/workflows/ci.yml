@@ -24,6 +24,15 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      # architecture-standards P2: the shared kernel's ceiling is mechanical, not advisory
+      # (~800 lines, checked in CI). ArchitectureTests asserts the other half — no
+      # entity, DTO or enum in it.
+      - name: Shared kernel size ceiling (P2)
+        run: |
+          lines=$(cat backend/src/SwarmApi.ServiceDefaults/*.cs | wc -l)
+          echo "SwarmApi.ServiceDefaults: ${lines} lines (ceiling 800)"
+          test "${lines}" -le 800
+
       - name: Restore
         run: dotnet restore backend/SwarmPlatform.sln
 
@@ -116,19 +125,40 @@ jobs:
       - name: Validate docker-compose config (auth profile)
         run: docker compose -f docker/docker-compose.yml --profile auth config -q
 
+      - name: Validate docker-compose config (GUI override)
+        run: DISPLAY=:0 docker compose -f docker/docker-compose.yml -f docker/docker-compose.gui.yml config -q
+
       - name: Validate Gazebo world SDF/XML well-formedness
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends libxml2-utils
           find simulation -name '*.sdf' -print0 | xargs -0 -n1 xmllint --noout
 
+      # The sim image is not built here (docs/adr/0004), so nothing else would notice if
+      # the per-drone configs went missing again — which is exactly what happened when a
+      # blanket `*.env` ignore rule kept them out of the repository.
+      - name: PX4 drone configs are present
+        run: |
+          test -f simulation/px4-configs/x500_common.env
+          ls simulation/px4-configs/drone_*.env
+          for world in simulation/worlds/*.sdf; do
+            name=$(sed -n 's/.*<world name="\([^"]*\)".*/\1/p' "$world")
+            test "$(basename "$world" .sdf)" = "$name" \
+              || { echo "::error file=$world::world name '$name' must match the file name"; exit 1; }
+          done
+
+      - name: Shell scripts (shellcheck) and entrypoint logic (stubbed)
+        run: |
+          shellcheck docker/entrypoint.sh docker/tests/test_entrypoint.sh scripts/*.sh scripts/hooks/pre-commit
+          bash docker/tests/test_entrypoint.sh
+
   docs:
     name: Docs site build (mkdocs --strict)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -139,14 +169,49 @@ jobs:
         run: mkdocs build --strict
 
   secret-scan:
-    name: Secret scan (gitleaks)
+    name: Secret scan (gitleaks, full history)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
+          # fetch-depth: 0 is load-bearing: the scan below reads git history, and a
+          # shallow clone would let a secret added and then removed in an earlier
+          # commit pass — the case this job exists to catch, since it is still in
+          # history. (The job used to pass --no-git, which scanned only the working
+          # tree and made this full fetch pointless.)
           fetch-depth: 0
 
-      - name: Run gitleaks
-        run: >
-          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect
-          --source=/repo --config=/repo/.gitleaks.toml --no-git -v
+      # Same scanner, image and invocation as architecture-standards'
+      # .github/workflows/secret-scan.yml and this repo's scripts/scan-secrets.sh, so a
+      # clean local run means a clean CI run. The image is :latest deliberately, per that
+      # workflow's reasoning: a pinned ruleset silently stops detecting whatever upstream
+      # added last month.
+      - name: Scan full git history
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/gitleaks/gitleaks:latest"
+          # gitleaks renamed `detect` to `git` in v8.19; probe instead of assuming.
+          if docker run --rm "$IMAGE" git --help >/dev/null 2>&1; then
+            SUB=(git /repo)
+          else
+            SUB=(detect --source=/repo)
+          fi
+          docker run --rm -v "$PWD:/repo" -w /repo "$IMAGE" "${SUB[@]}" \
+            --config=/repo/.gitleaks.toml --redact --no-banner --verbose --exit-code 1
+
+      - name: Explain a failure
+        if: failure()
+        run: |
+          {
+            echo "## Secret scan failed"
+            echo
+            echo "A credential-shaped string was found in this repository's history."
+            echo "**This repository is public**, so the order is not negotiable:"
+            echo
+            echo "1. **Rotate the credential.** Now, before anything else."
+            echo "2. Remove it from the source; read it from the environment instead."
+            echo "3. Only then clean history."
+            echo
+            echo "A false positive gets a **narrow** allowlist entry in \`.gitleaks.toml\`,"
+            echo "with a comment saying why. Reproduce locally: \`./scripts/scan-secrets.sh\`"
+          } >> "$GITHUB_STEP_SUMMARY"
