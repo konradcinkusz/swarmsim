@@ -57,6 +57,8 @@ reasoning; check there before assuming a gap is accidental.
   `gz_x500` is a run target, not a build target; PX4 treats any non-empty `HEADLESS` as
   headless; its `Tools/setup/ubuntu.sh` installs Gazebo Garden, not the Harmonic
   ADR-0001 chose, and pip-installs NumPy 2, which must stay out of the runtime stage.
+  Do not assume a ROS binary exists either: `ros-humble-mavros` was missing from the
+  Humble apt repository, which is why MAVROS is built from a pinned release tag.
   `docker/tests/test_entrypoint.sh` checks the entrypoint's decisions against stubs;
   keep it passing and extend it with the entrypoint.
 - Adding to `.gitignore`: name the files, not an extension. `*.env` once hid the

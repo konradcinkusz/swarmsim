@@ -82,8 +82,10 @@ ros2 topic echo /swarm/state
 ```
 
 Outside the image, it needs a ROS 2 Humble workspace with MAVROS and its geoid dataset
-(`sudo apt install ros-humble-mavros` and
-`sudo /opt/ros/humble/lib/mavros/install_geographiclib_datasets.sh`), then:
+(`sudo geographiclib-get-geoids egm96-5`). `sudo apt install ros-humble-mavros` is the
+usual way to get MAVROS, but in September 2026 the Humble apt repository had no MAVROS
+package, so `docker/Dockerfile.sim` builds it from its release tag with rosdep and colcon —
+the same steps work outside the image. Then:
 
 ```bash
 colcon build --packages-select swarm_coordination

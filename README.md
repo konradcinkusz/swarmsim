@@ -376,7 +376,7 @@ connection — the same pure/adapter split as `swarm_coordination`.
 
 | Kind | Packages |
 |---|---|
-| Runtime (from the ROS 2 apt distro, not pip) | `rclpy`, `geometry_msgs`, `mavros_msgs`, `sensor_msgs`, `std_msgs`; `launch`, `launch_ros`, `mavros` to launch it |
+| Runtime (from the ROS 2 apt distro, not pip) | `rclpy`, `geometry_msgs`, `mavros_msgs`, `sensor_msgs`, `std_msgs`; `launch`, `launch_ros`, `mavros` to launch it (the sim image builds `mavros` and `mavros_msgs` from their release tags — see `docker/Dockerfile.sim`) |
 | Dev/test (pip) | `ruff`, `pytest`, `jsonschema` (the contract tests) |
 
 The pure-logic modules (`trajectory.py`, `waypoints.py`, `formation.py`,

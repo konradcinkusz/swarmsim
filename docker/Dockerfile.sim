@@ -11,13 +11,18 @@
 # Three stages:
 #   gz     — ROS 2 Humble plus Gazebo Harmonic, shared by the two below.
 #   px4    — PX4's toolchain and its build-time Python packages; compiles SITL.
-#   (last) — the runtime: the PX4 tree from `px4`, without the toolchain's pip packages.
+#   (last) — the runtime: MAVROS built from source, rosbridge, the swarm_coordination
+#            package, and the PX4 tree from `px4` without the toolchain's pip packages.
 # The split is not about a slim binary: PX4 SITL runs from its checked-out tree
 # (ROMFS, the airframe scripts, the `build/` tree `make` produces), so the runtime still
 # carries the whole checkout. It is about what the runtime must NOT carry — see the
 # `px4` stage.
 
 ARG PX4_VERSION=v1.15.0
+# MAVROS and the mavlink message package it builds against, pinned like PX4 (see the
+# MAVROS step in the last stage for why they are built rather than installed).
+ARG MAVROS_VERSION=2.15.1
+ARG MAVLINK_RELEASE=2026.9.9-1
 
 # ---------------------------------------------------------------------------
 FROM ros:humble-ros-base AS gz
@@ -91,13 +96,12 @@ RUN test -n "$(find build/px4_sitl_default -name 'libmodules__simulation__gz_bri
 # ---------------------------------------------------------------------------
 FROM gz
 
+ARG MAVROS_VERSION
+ARG MAVLINK_RELEASE
 ARG DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# rosbridge is what SwarmApi.Api connects to; MAVROS bridges each PX4 instance's onboard
-# MAVLink port into ROS 2 for the coordination nodes. MAVROS refuses to start without
-# its geoid dataset, which is not in the package — so the build fails here, not the
-# first flight, if the download did not land.
+# rosbridge is what SwarmApi.Api connects to.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         geographiclib-tools \
@@ -105,23 +109,48 @@ RUN apt-get update \
         libgl1-mesa-dri \
         mesa-utils \
         python3-colcon-common-extensions \
-        ros-humble-mavros \
+        python3-rosdep \
         ros-humble-rosbridge-suite \
         tmux \
-    && rm -rf /var/lib/apt/lists/* \
-    && /opt/ros/humble/lib/mavros/install_geographiclib_datasets.sh
+    && rm -rf /var/lib/apt/lists/*
 
-# The dataset script reports a failed download and exits 0 anyway.
-RUN compgen -G "/usr/share/GeographicLib/geoids/egm96-5*" \
+# MAVROS bridges each PX4 instance's onboard MAVLink port into ROS 2 for the coordination
+# nodes. It is built from its release tag, not installed: in September 2026 the ROS
+# Humble apt repository had no ros-humble-mavros package at all, although rosdistro
+# releases 2.15.1 for Humble (the first SITL smoke run failed on exactly that), and a
+# source build pins it the way PX4_VERSION pins PX4. The mavlink message package comes
+# from its Humble release tag for the same reason; rosdep installs everything else.
+WORKDIR /opt/mavros_ws
+RUN git clone --depth 1 --branch "${MAVROS_VERSION}" \
+        https://github.com/mavlink/mavros.git src/mavros \
+    && git clone --depth 1 --branch "release/humble/mavlink/${MAVLINK_RELEASE}" \
+        https://github.com/ros2-gbp/mavlink-gbp-release.git src/mavlink \
+    && apt-get update \
+    && { rosdep init 2>/dev/null || true; } \
+    && rosdep update --rosdistro humble \
+    && rosdep install --from-paths src --ignore-src -y --rosdistro humble \
+        -t buildtool -t buildtool_export -t build -t build_export -t exec \
+    && rm -rf /var/lib/apt/lists/* \
+    && source /opt/ros/humble/setup.bash \
+    && colcon build --packages-up-to mavros \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+    && rm -rf build log src
+
+# MAVROS refuses to start without the egm96-5 geoid, which no package ships; fail the
+# build here rather than at the first flight if the download did not land.
+RUN geographiclib-get-geoids egm96-5; \
+    compgen -G "/usr/share/GeographicLib/geoids/egm96-5*" \
     || compgen -G "/usr/local/share/GeographicLib/geoids/egm96-5*" \
     || { echo "GeographicLib geoid dataset egm96-5 is missing; MAVROS would not start" >&2; exit 1; }
 
 COPY --from=px4 /opt/PX4-Autopilot /opt/PX4-Autopilot
 
-# The coordination package last, so a change to it rebuilds these layers only — not PX4.
+# The coordination package last, so a change to it rebuilds these layers only — not PX4
+# or MAVROS. Built on top of the MAVROS workspace, so sourcing its setup.bash brings
+# MAVROS along.
 COPY swarm_coordination /opt/swarmsim/ws/src/swarm_coordination
 WORKDIR /opt/swarmsim/ws
-RUN source /opt/ros/humble/setup.bash \
+RUN source /opt/mavros_ws/install/setup.bash \
     && colcon build --packages-select swarm_coordination \
     && rm -rf build log
 
