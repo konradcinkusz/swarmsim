@@ -1,6 +1,7 @@
 """The node adapters, driven through fake_ros: topic names, frames, and what each node
 publishes in answer to what it hears. Real DDS and PX4 are the SITL smoke's job."""
 
+import ast
 import json
 import types
 from pathlib import Path
@@ -37,9 +38,49 @@ def _json(msg):
     return json.loads(msg.data)
 
 
+def test_a_node_that_takes_over_rclpy_s_own_attributes_fails_here_as_in_rclpy(bus):
+    # rclpy.node.Node keeps its publishers, timers, clock and logger in attributes of the
+    # node itself. A subclass that assigns one of them breaks rclpy later, somewhere else:
+    # the dispatcher did, and died at start in every SITL smoke run while these tests passed.
+    from rclpy.node import Node
+
+    class TakesOver(Node):
+        def __init__(self):
+            super().__init__("takes_over")
+            self._publishers = {}
+
+    with pytest.raises(AttributeError, match="_publishers"):
+        TakesOver()
+
+
+def test_no_node_assigns_an_attribute_rclpy_keeps_its_own_state_in():
+    # The fake refuses such an assignment only on the paths a test drives; this reads
+    # every assignment in every node.
+    nodes = Path(__file__).resolve().parents[1] / "swarm_coordination" / "nodes"
+    taken = []
+    for source in sorted(nodes.glob("*.py")):
+        for statement in ast.walk(ast.parse(source.read_text())):
+            if isinstance(statement, ast.Assign):
+                targets = statement.targets
+            elif isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+                targets = [statement.target]
+            else:
+                continue
+            taken += [
+                f"{source.name}:{statement.lineno} self.{target.attr}"
+                for target in targets
+                if isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+                and target.attr in fake_ros.RCLPY_NODE_ATTRIBUTES
+            ]
+    assert taken == []
+
+
 def test_the_dispatcher_can_reach_every_drone_before_the_first_mission(bus):
-    # A ROS 2 publisher created on demand is not yet matched with its subscribers, and
-    # the one message it sends at once is lost: every drone's topics exist from the start.
+    # A ROS 2 publisher created just before its first message may not be matched with its
+    # subscribers yet, and a volatile message sent then is lost: every drone's topics exist
+    # from the start.
     _node(bus, "mission_dispatcher_node", "MissionDispatcherNode", drones=["drone_1", "drone_2"])
 
     for drone in ("drone_1", "drone_2"):
@@ -160,20 +201,20 @@ def test_the_controller_flies_a_world_frame_path_with_local_frame_setpoints(bus)
 
     setpoint = bus.messages("/drone_2/mavros/setpoint_position/local")[0].pose.position
     assert (setpoint.x, setpoint.y, setpoint.z) == (0.0, 0.0, 2.0)  # 2 m carrot straight up
-    mode_requests = node.clients["/drone_2/mavros/set_mode"].requests
+    mode_requests = fake_ros.client(node, "/drone_2/mavros/set_mode").requests
     assert [r.custom_mode for r in mode_requests] == ["OFFBOARD"]
 
     bus.publish("/drone_2/mavros/state", fake_ros.State(armed=False, mode="OFFBOARD"))
     bus.advance(0.1)
     fake_ros.fire(node, period=0.1)
-    assert node.clients["/drone_2/mavros/cmd/arming"].requests[-1].value is True
+    assert fake_ros.client(node, "/drone_2/mavros/cmd/arming").requests[-1].value is True
 
 
 def test_a_drone_that_cannot_take_off_says_why(bus):
     node = _controller(bus)
-    arming = node.clients["/drone_2/mavros/cmd/arming"]
+    arming = fake_ros.client(node, "/drone_2/mavros/cmd/arming")
     arming.response = types.SimpleNamespace(success=False, result=4)  # MAV_RESULT_FAILED
-    node.clients["/drone_2/mavros/set_mode"].ready = False
+    fake_ros.client(node, "/drone_2/mavros/set_mode").ready = False
     bus.publish("/drone_2/mavros/local_position/pose", fake_ros.pose(0.0, 0.0, 0.0))
     bus.publish(
         "/drone_2/mission/assignment",
@@ -185,9 +226,9 @@ def test_a_drone_that_cannot_take_off_says_why(bus):
         fake_ros.fire(node, period=0.1)
     warnings = [text for level, text in node.get_logger().lines if level == "warning"]
     assert warnings == ["cannot ask PX4 for OFFBOARD: mavros/set_mode is not available"]
-    assert node.clients["/drone_2/mavros/set_mode"].requests == []
+    assert fake_ros.client(node, "/drone_2/mavros/set_mode").requests == []
 
-    node.clients["/drone_2/mavros/set_mode"].ready = True
+    fake_ros.client(node, "/drone_2/mavros/set_mode").ready = True
     bus.publish("/drone_2/mavros/state", fake_ros.State(armed=False, mode="OFFBOARD"))
     bus.advance(0.1)
     fake_ros.fire(node, period=0.1)
@@ -222,7 +263,7 @@ def test_a_follower_subscribes_to_its_leader_and_lands_when_the_leader_finishes(
     )
     bus.advance(0.1)
     fake_ros.fire(node, period=0.1)
-    assert node.clients["/drone_2/mavros/set_mode"].requests[-1].custom_mode == "AUTO.LAND"
+    assert fake_ros.client(node, "/drone_2/mavros/set_mode").requests[-1].custom_mode == "AUTO.LAND"
 
 
 def test_a_swarm_command_hands_the_controller_over_to_px4(bus):
@@ -232,7 +273,7 @@ def test_a_swarm_command_hands_the_controller_over_to_px4(bus):
     bus.advance(0.1)
     fake_ros.fire(node, period=0.1)
 
-    assert node.clients["/drone_2/mavros/set_mode"].requests[-1].custom_mode == "AUTO.LAND"
+    assert fake_ros.client(node, "/drone_2/mavros/set_mode").requests[-1].custom_mode == "AUTO.LAND"
 
 
 def test_the_aggregator_publishes_contract_state_and_reports_completion(bus):

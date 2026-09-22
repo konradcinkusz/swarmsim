@@ -33,7 +33,10 @@ Every module above `nodes/` is free of `rclpy` and unit tested without a ROS 2 i
 The nodes are tested too — `test/fake_ros.py` stands in for `rclpy` and the message
 packages, so `test/test_nodes_with_fake_ros.py` wires real node code to a fake bus and
 checks what they publish and which MAVROS services they call. See `conftest.py` and
-`pyproject.toml` for how.
+`pyproject.toml` for how. The fake keeps a node's publishers, timers, clock and logger in
+the attributes rclpy keeps them in, and refuses a node that assigns one of those names —
+rclpy allows it and fails later, which is how the dispatcher died at start in every SITL
+smoke run until 2026-09-22.
 
 ## How a mission flies
 

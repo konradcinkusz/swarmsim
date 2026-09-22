@@ -31,11 +31,12 @@ class MissionDispatcherNode(Node):
         self.declare_parameter("drones", ["drone_1"])
         self._drones = [str(d) for d in self.get_parameter("drones").value]
 
-        # Every drone's publishers exist from the start. A ROS 2 publisher created when the
-        # first mission arrives has not yet been matched with its subscribers, and the one
-        # message it sends straight away is lost — the SITL smoke's drones sat on their pads
-        # with a mission Active for seven minutes that way.
-        self._publishers: dict[str, object] = {}
+        # Every drone's publishers exist from the start, not from the first mission: a
+        # publisher created just before its first message may not be matched with its
+        # subscribers yet, and a volatile message sent then is lost. Not in
+        # `self._publishers`: rclpy.node.Node keeps its own list there, and replacing it
+        # killed this node at start in every SITL smoke run until 2026-09-22.
+        self._topic_publishers: dict[str, object] = {}
         for drone in self._drones:
             for topic in ("mission/assignment", "mission/slot", "mission/command"):
                 self._publisher(f"/{drone}/{topic}")
@@ -46,9 +47,9 @@ class MissionDispatcherNode(Node):
         self.get_logger().info(f"mission_dispatcher_node ready for {self._drones}")
 
     def _publisher(self, topic: str):
-        if topic not in self._publishers:
-            self._publishers[topic] = self.create_publisher(String, topic, 10)
-        return self._publishers[topic]
+        if topic not in self._topic_publishers:
+            self._topic_publishers[topic] = self.create_publisher(String, topic, 10)
+        return self._topic_publishers[topic]
 
     def _publish_active(self, mission_id: str | None, drones: list[str]) -> None:
         payload = {"mission_id": mission_id, "drones": drones}
