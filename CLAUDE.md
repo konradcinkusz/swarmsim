@@ -31,7 +31,8 @@ reasoning; check there before assuming a gap is accidental.
 | `scenarios/` | Swarm scenarios (YAML) run in L0 on every push, with the mutation check | `python -m swarm_coordination.scenarios` |
 | `action.yml`, `actions/mission-smoke/` | GitHub Actions: the scenario check (runs in the caller's job), the running-API smoke test | composite actions |
 | `backend/` | .NET solution: `SwarmApi.Domain/Application/Infrastructure/ServiceDefaults/Api` | `dotnet` |
-| `mcp_server/` | MCP server: swarm-level tools over `SwarmApi.Api`'s REST surface, no ROS dependency | `pytest`, `ruff` |
+| `mcp_server/` | MCP server: swarm-level tools over `SwarmApi.Api`'s REST surface, no ROS dependency; `BEHAVIOUR.md` is its normative tool table | `pytest`, `ruff` |
+| `e2e/` | The dashboard in a real browser (Playwright, Chromium) against a running API | `pytest`, `playwright` |
 | `docs/adr/` | One decision record per architectural choice | — |
 | `docs/architecture/` | This repo's compliance checklist and deviation register | — |
 | `scripts/` | `setup.sh` (onboarding + pre-commit hook), `scan-secrets.sh` (CI secret scan, locally) | `bash`, `gitleaks` |
@@ -64,6 +65,13 @@ reasoning; check there before assuming a gap is accidental.
   logic goes in `SwarmApi.Application`/`SwarmApi.Domain`, not in the endpoint handlers.
   A new integration (a second bridge transport, a persistence store) is an interface in
   `SwarmApi.Application` plus a DI registration, not a base class.
+- Adding or changing an endpoint: give it a row in `docs/architecture/API-SURFACE.md`
+  first — its class (read, plan, approval, gated-write, write, safety-write), whether
+  Enforced mode lets it through without a token, whether it honours `Idempotency-Key`
+  (every POST does: `.WithIdempotency()`). `ApiSurfaceTests` fails on an endpoint without
+  a row or one that disagrees with it. Nothing that makes drones fly may be reachable by
+  an agent without a person's approval (`docs/adr/0009-agent-write-gate.md`); stopping
+  (abort, land-all) is never gated.
 - Changing `docker/Dockerfile.sim` or `docker/entrypoint.sh`: the image is built and flown
   only by `.github/workflows/sim-smoke.yml` (most of an hour cold; see
   `docs/adr/0004-ci-scope-for-simulation-stack.md`), so read PX4's own scripts for the
@@ -85,9 +93,13 @@ reasoning; check there before assuming a gap is accidental.
   `authservice` follows the same shape (Open/Enforced) — see
   `docs/adr/0005-mcp-server-and-bearer-auth.md`.
 - Changing `mcp_server/`: keep `server.py` (MCP tool registration, needs the `mcp`
-  package) thin; request-building and payload shaping belong in `swarm_client.py`, which
-  stays free of the `mcp` import so `pytest` can exercise it with no network and no `mcp`
-  install — mirrors the `swarm_coordination` node/pure-logic split.
+  package, 2.x — `MCPServer`, not the removed `FastMCP`) thin; the tools and their
+  classification live in `tools.py`, requests and failures in `swarm_client.py`, both
+  free of the `mcp` import so `pytest` exercises them with no network and no `mcp`
+  install — mirrors the `swarm_coordination` node/pure-logic split. A new tool needs a
+  row in `mcp_server/BEHAVIOUR.md` whose class matches the endpoint it calls; there is no
+  tool that approves a plan or calls `POST /api/missions`, and adding one fails
+  `test_behaviour.py` on purpose.
 
 ## Local verification
 
@@ -100,7 +112,10 @@ reasoning; check there before assuming a gap is accidental.
   scenarios --seeds 3 --mutants` (seconds; exit 0 only if every scenario met its
   expectation and every mutant was caught).
 - MCP server: `cd mcp_server && ruff check . && pytest` (no `mcp` install needed — only
-  `swarm_client.py` is exercised).
+  `swarm_client.py` and `tools.py` are exercised).
+- Dashboard (browser): `pip install playwright pytest && python -m playwright install
+  chromium && pytest e2e -v` — starts the API itself with `dotnet run`; set
+  `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use a Chromium already on the machine.
 - Simulation config: `docker compose -f docker/docker-compose.yml config -q` (and
   `--profile auth config -q` for the optional `authservice` services;
   `DISPLAY=:0 ... -f docker/docker-compose.gui.yml config -q` for the GUI override).

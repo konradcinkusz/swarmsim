@@ -11,8 +11,9 @@ the integration point for a future natural-language mission layer.
 
 This repository covers the **foundational phase**: bring up a multi-drone simulation,
 give it basic swarm coordination (waypoint following, leader-follower formation), and
-put an API and a dashboard in front of it. A natural-language mission layer (M5) is
-explicitly out of scope here — see [Milestones](#milestones).
+put an API and a dashboard in front of it. A natural-language mission layer (M5) is not
+built here; the gate such a layer has to go through is — an agent can propose a mission,
+but only a person's approval makes it fly ([MCP server](#mcp-server)).
 
 **Docs site:** [konradcinkusz.github.io/swarmsim](https://konradcinkusz.github.io/swarmsim/)
 — rendered architecture docs, ADRs, and the open-deviations register. This README stays
@@ -24,12 +25,14 @@ behind how it's built.
 ```mermaid
 flowchart TB
     subgraph Dashboard["Browser"]
-        UI["Dashboard (wwwroot)<br/>polls GET /api/swarm/state"]
+        UI["Dashboard (wwwroot)<br/>swarm state · plan approvals · abort / land"]
     end
+
+    Agent["Agent (MCP client)"] --> MCP["mcp_server<br/>plan · dispatch with a code · stop"]
 
     subgraph Api[".NET — SwarmApi"]
         Ep["Api: endpoints (transport only)"]
-        App["Application: MissionService<br/>validate · dispatch · abort · land · lifecycle"]
+        App["Application: MissionService · MissionPlanService<br/>validate · plan · approve · dispatch · abort · land"]
         Dom["Domain: Mission, SwarmState, Trajectory, Formation"]
         Bridge["Infrastructure: ISwarmBridge<br/>RosBridgeSwarmBridge (real, reconnecting) /<br/>SimulatedSwarmBridge (no URL configured)"]
         Ep --> App --> Bridge
@@ -49,6 +52,7 @@ flowchart TB
     end
 
     UI -->|HTTP| Ep
+    MCP -->|"HTTP, Idempotency-Key"| Ep
     Bridge -->|"WebSocket: /swarm/mission, /swarm/command →<br/>← /swarm/state (contracts/rosbridge/)"| RB
 ```
 
@@ -81,7 +85,7 @@ every recorded deviation with its reasoning: [`docs/architecture/`](docs/archite
 | M2 | Waypoint-following and leader-follower formation, no collisions | Implemented, unit tested (`swarm_coordination/`, `backend/.../Formation.cs`); the SITL smoke job flies waypoint lanes and a line formation |
 | M3 | Missions in (`POST /api/missions`, abort, land-all), swarm state out (`GET /api/swarm/state`), < 1s state latency | Implemented; integration tested against the simulated swarm and an in-process rosbridge; flown end to end by the SITL smoke job, p95 state age 0.2 s |
 | M4 | Real-time swarm status readable without a terminal | Implemented (`backend/src/SwarmApi.Api/wwwroot/`) |
-| M5 | Natural-language mission layer | Out of scope for this repository's current phase |
+| M5 | Natural-language mission layer | Not built. What is built is its gate: an agent plans through MCP, a person approves, only the approval's single-use code flies it ([ADR-0009](docs/adr/0009-agent-write-gate.md)); no language model ships here |
 
 <a name="m0-manual-verification"></a>
 **What "flown by the SITL smoke job" means:** `.github/workflows/sim-smoke.yml` builds
@@ -195,6 +199,32 @@ curl -s http://localhost:5000/api/missions/<id> | jq      # status, endedAtUtc
 curl -s -X POST http://localhost:5000/api/swarm/land | jq
 ```
 
+**Plans and approvals.** The same body posted to `/api/mission-plans` flies nothing:
+it answers with a preview — every drone's path, the estimated duration, the closest
+approach between any two drones — and a status. A plan that would bring two drones
+within 2 m is `Conflicted` and cannot be approved. A person approves a plan (the
+dashboard's **Approve**, or the API) and receives a single-use approval code, shown
+once. The plan flies only when dispatched with that code, within 10 minutes. This is the
+only way the MCP server can start a mission
+([ADR-0009](docs/adr/0009-agent-write-gate.md)).
+
+```bash
+plan=$(curl -s -X POST http://localhost:5000/api/mission-plans \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Survey","type":"waypoint","waypoints":[{"x":0,"y":0,"z":5},{"x":20,"y":0,"z":5}],"droneCount":2,"spacingMeters":3}' | jq -r .id)
+curl -s http://localhost:5000/api/mission-plans/$plan | jq '.status, .preview.conflicts'
+code=$(curl -s -X POST http://localhost:5000/api/mission-plans/$plan/approve | jq -r .approvalCode)
+curl -s -X POST http://localhost:5000/api/mission-plans/$plan/dispatch \
+  -H 'Content-Type: application/json' -d "{\"approvalCode\":\"$code\"}" | jq '.id, .status'
+```
+
+**Retries are safe with `Idempotency-Key`.** Every POST honours the header: send the same
+key again and you get the first answer back (`Idempotency-Replayed: true`) instead of a
+second mission. The same key with a different body is 422. Which endpoints are reads,
+writes, plans, approvals or stops — and which need a token — is the table in
+[`docs/architecture/API-SURFACE.md`](docs/architecture/API-SURFACE.md), which the tests
+hold the API to.
+
 `"type": "formation"` flies a leader-follower formation instead (`"formation": "line"`
 or `"v"`; the leader flies the waypoints, the followers hold their slots). Requests are
 checked against a safety envelope before anything is dispatched — at most 5 drones,
@@ -219,9 +249,13 @@ endpoint reachable with no token, exactly as in the two sections above. Set it t
 [`authservice`](https://github.com/konradcinkusz/authservice) instance's base URL to
 switch to **Enforced** mode, which denies by default: every endpoint requires a valid
 bearer token (RS256, validated via that service's JWKS) unless it explicitly opts out.
-The opt-outs are the dashboard's static files, `/health`, `/alive`, `GET
-/api/swarm/state` and `GET /api/missions/{id}`; every write — create, abort, land-all —
-needs a token, and so does any endpoint added later that forgets to decide. `GET
+The opt-outs are the dashboard's static files, `/health`, `/alive` and the `GET` reads
+([API-SURFACE.md](docs/architecture/API-SURFACE.md)); every write — create, plan,
+approve, dispatch, abort, land-all — needs a token, and so does any endpoint added later
+that forgets to decide. The identity that proposed a plan cannot approve it. The
+dashboard has no login yet, so in Enforced mode its buttons get a 401 — stop the swarm
+through the API with a token (the P5 row in
+[`DEVIATIONS.md`](docs/architecture/DEVIATIONS.md)). `GET
 /health` reports which mode is active (`auth: "Open" | "Enforced"`).
 See [`docs/adr/0005-mcp-server-and-bearer-auth.md`](docs/adr/0005-mcp-server-and-bearer-auth.md)
 for the reasoning and exact scope, and `docker compose --profile auth up` in `docker/`
@@ -261,10 +295,21 @@ why the instrument is built this way in
 
 ### MCP server
 
-[`mcp_server/`](mcp_server/README.md) exposes `get_swarm_status` and `start_mission` as
-MCP tools over this same REST API — no new ROS 2 bridge, swarm-level by construction
-since it wraps the existing `Mission`/`SwarmState` domain layer rather than per-drone ROS
-topics. See that directory's README for tool details and client configuration.
+[`mcp_server/`](mcp_server/README.md) gives an agent (Claude, or any MCP client)
+swarm-level tools over this same REST API — no new ROS 2 bridge:
+
+| Tool | What it may do |
+|---|---|
+| `get_swarm_status`, `get_mission`, `get_mission_plan` | read |
+| `plan_mission` | propose a plan; nothing flies |
+| `dispatch_mission` | fly an approved plan — only with the approval code a person gives it |
+| `abort_mission`, `land_all` | stop drones; never waits for approval |
+
+No tool approves a plan. The API enforces that — not the agent's instructions — so an
+agent calling the API directly is held to the same rules. Every tool carries MCP's
+read-only/destructive annotations, and every write carries an `Idempotency-Key`.
+[`mcp_server/BEHAVIOUR.md`](mcp_server/BEHAVIOUR.md) is the normative table the tests
+check the tools against; see that directory's README for client configuration.
 
 ## Tutorial: everything, step by step
 
@@ -403,8 +448,12 @@ Everything else (minimal APIs, `System.Net.WebSockets.ClientWebSocket`, health c
 | Runtime | `mcp` |
 | Dev/test (pip) | `ruff`, `pytest` |
 
-Only `swarm_client.py` (pure request-building) needs neither `mcp` nor a network
+Only `server.py` imports `mcp`; `tools.py` (the tools and their classification) and
+`swarm_client.py` (requests, retries, failures) need neither `mcp` nor a network
 connection — the same pure/adapter split as `swarm_coordination`.
+
+**`e2e/` (Python, test only):** `playwright` (pinned in CI to the version the suite was
+written against) and `pytest`; Chromium comes from `playwright install`.
 
 **`swarm_coordination/` (ROS 2 ament_python package, `package.xml`):**
 
