@@ -1,4 +1,7 @@
 version: 2
+# One grouped PR per ecosystem per week rather than one per package: dependency PRs are
+# attention debt before they are security debt, and ungrouped bots drown the human PRs a
+# public repository exists to receive (the portfolio's own Dependabot health check).
 updates:
   - package-ecosystem: "nuget"
     directory: "/backend"
@@ -13,13 +16,34 @@ updates:
     directory: "/swarm_coordination"
     schedule:
       interval: "weekly"
+    groups:
+      swarm-coordination:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "pip"
+    directory: "/mcp_server"
+    schedule:
+      interval: "weekly"
+    groups:
+      mcp-server:
+        patterns:
+          - "*"
 
   - package-ecosystem: "docker"
     directory: "/docker"
     schedule:
       interval: "weekly"
+    groups:
+      container-images:
+        patterns:
+          - "*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
