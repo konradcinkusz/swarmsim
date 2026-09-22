@@ -24,6 +24,7 @@ make_sandbox() {
   cp "${REPO_ROOT}"/simulation/px4-configs/*.env "${root}/swarmsim/px4-configs/"
   cp "${REPO_ROOT}"/simulation/worlds/*.sdf "${root}/swarmsim/worlds/"
   : > "${root}/ros_setup.bash"
+  : > "${root}/coordination_setup.bash"
   printf '#!/bin/sh\nexit 0\n' > "${root}/px4/build/px4_sitl_default/bin/px4"
 
   cat > "${root}/bin/ros2" <<'STUB'
@@ -49,7 +50,8 @@ run_entrypoint() {
   local root="$1"; shift
   env -i PATH="${root}/bin:/usr/bin:/bin" HOME="${root}" \
     SWARMSIM_ROOT="${root}/swarmsim" PX4_DIR="${root}/px4" \
-    ROS_SETUP="${root}/ros_setup.bash" SWARMSIM_LOG_DIR="${root}/logs" \
+    ROS_SETUP="${root}/ros_setup.bash" COORDINATION_SETUP="${root}/coordination_setup.bash" \
+    SWARMSIM_LOG_DIR="${root}/logs" \
     GZ_WAIT_SECONDS=5 "$@" \
     bash "${ENTRYPOINT}" > "${root}/out.log" 2>&1 || echo "exit=$?" >> "${root}/out.log"
 }
@@ -67,7 +69,7 @@ refute() {
   local description="$1"; shift
   if "$@"; then fail "${description}"; else pass "${description}"; fi
 }
-spawn_count() { grep -c 'tmux new-session' "$1/calls.log" || true; }
+spawn_count() { grep -c 'tmux new-session -d -s drone_' "$1/calls.log" || true; }
 spawned_sessions() {
   grep -o 'new-session -d -s drone_[0-9]*' "$1/calls.log" | awk '{print $4}' | tr '\n' ' '
 }
@@ -83,11 +85,23 @@ check "one Gazebo server on the configured world" \
   grep -q 'gz sim --verbose=1 -r -s .*/swarmsim_empty.sdf' "${WORK}/all/calls.log"
 refute "no GUI by default" grep -q 'gz sim -g' "${WORK}/all/calls.log"
 
+check "coordination starts for all five drones, with MAVROS, from the same configs" \
+  grep -q 'new-session -d -s coordination .*spawn_swarm.launch.py.*with_mavros:=true.*px4-configs.*drone_count:=5' \
+  "${WORK}/all/calls.log"
+
 # 2. SWARM_DRONE_COUNT limits the swarm, in numeric order.
 make_sandbox "${WORK}/two"
 run_entrypoint "${WORK}/two" SWARM_DRONE_COUNT=2
 check "SWARM_DRONE_COUNT=2 spawns drone_1 and drone_2" \
   test "$(spawned_sessions "${WORK}/two")" = "drone_1 drone_2 "
+check "coordination is told the same count" \
+  grep -q 'new-session -d -s coordination .*drone_count:=2' "${WORK}/two/calls.log"
+
+# 2b. SWARM_COORDINATION=0 leaves PX4 bare.
+make_sandbox "${WORK}/bare"
+run_entrypoint "${WORK}/bare" SWARM_COORDINATION=0
+refute "SWARM_COORDINATION=0 starts no coordination session" \
+  grep -q 'new-session -d -s coordination' "${WORK}/bare/calls.log"
 
 # 3. HEADLESS=0 adds the GUI.
 make_sandbox "${WORK}/gui"

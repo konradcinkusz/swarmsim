@@ -17,6 +17,9 @@ services:
       - HEADLESS=${HEADLESS:-1}
       # Spawn only the first N of simulation/px4-configs/drone_*.env (empty: all of them).
       - SWARM_DRONE_COUNT=${SWARM_DRONE_COUNT:-}
+      # 1 (default): also run the ROS 2 coordination side (MAVROS per drone, controllers,
+      # mission dispatcher, state aggregator). 0: PX4 and rosbridge only.
+      - SWARM_COORDINATION=${SWARM_COORDINATION:-1}
     ports:
       # rosbridge WebSocket — what SwarmApi.Infrastructure's RosBridgeSwarmBridge
       # connects to (RosBridge__Url=ws://localhost:9090 from the host).
@@ -27,9 +30,8 @@ services:
       # with `docker compose exec sim tmux attach -t drone_<n>` instead.
       - "9090:9090"
     healthcheck:
-      # Healthy = rosbridge accepts connections, which is what SwarmApi.Api needs before
-      # it decides Connected vs Simulated (docs/adr/0003). The generous start period
-      # covers Gazebo and PX4 coming up on a cold container.
+      # Healthy = rosbridge accepts connections — what SwarmApi.Api connects to. The
+      # generous start period covers Gazebo, PX4 and MAVROS coming up on a cold container.
       test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/9090"]
       interval: 5s
       timeout: 3s
@@ -45,9 +47,9 @@ services:
     image: swarmsim/api:local
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      # Container-to-container DNS name; unset entirely (or unreachable) and the API
-      # degrades to the in-memory simulated bridge instead of failing to start — see
-      # docs/adr/0003-rosbridge-degrade-pattern.md.
+      # Container-to-container DNS name. Set, the API uses the real swarm and reports
+      # Disconnected (retrying in the background) whenever rosbridge is unreachable;
+      # unset, it runs the in-memory simulated swarm — docs/adr/0003 and its amendments.
       - RosBridge__Url=ws://sim:9090
       # Unset (default) keeps SwarmApi.Api in Open auth mode — no token needed anywhere.
       # Run with `--profile auth` and set SWARM_AUTH_AUTHORITY=http://authservice:8080
@@ -60,8 +62,8 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      # Wait for rosbridge rather than merely for the container to exist: the API picks
-      # its bridge once at startup, and started too early it settles on Simulated.
+      # Wait for rosbridge rather than merely for the container to exist. The API would
+      # connect on its own once rosbridge is up; waiting only spares the retry noise.
       sim:
         condition: service_healthy
     networks:

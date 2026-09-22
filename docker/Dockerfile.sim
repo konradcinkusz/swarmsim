@@ -1,31 +1,61 @@
 # syntax=docker/dockerfile:1
 #
-# swarmsim simulation image: ROS 2 Humble + PX4 SITL + Gazebo Harmonic.
+# swarmsim simulation image: ROS 2 Humble + PX4 SITL + Gazebo Harmonic, MAVROS,
+# rosbridge and the swarm_coordination package.
 #
-# Not built in CI — see ../docs/adr/0004-ci-scope-for-simulation-stack.md for why
-# (long source build, needs hosts this repo's CI does not have access to, GPU needed
-# for the GUI acceptance criterion). hadolint lints this file in CI instead.
+# Built and flown by .github/workflows/sim-smoke.yml (headless, CPU only); the GUI path
+# stays a manual check — see ../docs/adr/0004-ci-scope-for-simulation-stack.md and its
+# amendment. A cold build takes most of an hour, which is why an agent sandbox should
+# not try it.
 #
-# Two stages exist for layer hygiene (build tools vs. runtime packages), not to slim a
-# final binary out of a source tree: PX4 SITL runs *from* its checked-out source tree
-# (Python/jinja airframe templates, ROMFS, the `build/` tree `make` produces) rather
-# than shipping as a single compiled binary, so the runtime stage still carries the
-# full PX4-Autopilot checkout by necessity.
+# Three stages:
+#   gz     — ROS 2 Humble plus Gazebo Harmonic, shared by the two below.
+#   px4    — PX4's toolchain and its build-time Python packages; compiles SITL.
+#   (last) — the runtime: the PX4 tree from `px4`, without the toolchain's pip packages.
+# The split is not about a slim binary: PX4 SITL runs from its checked-out tree
+# (ROMFS, the airframe scripts, the `build/` tree `make` produces), so the runtime still
+# carries the whole checkout. It is about what the runtime must NOT carry — see the
+# `px4` stage.
 
 ARG PX4_VERSION=v1.15.0
 
 # ---------------------------------------------------------------------------
-FROM ros:humble-ros-base AS builder
+FROM ros:humble-ros-base AS gz
 
-ARG PX4_VERSION
 ARG DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        git \
         ca-certificates \
+        git \
+        gnupg \
+        lsb-release \
+        sudo \
+        wget \
     && rm -rf /var/lib/apt/lists/*
+
+# Gazebo Harmonic, per docs/adr/0001. Installed here rather than by PX4's installer:
+# PX4 v1.15.0's Tools/setup/ubuntu.sh installs Gazebo *Garden* on 22.04 — end of life
+# since 2024-11 — so the `px4` stage runs it with --no-sim-tools. PX4 v1.15's gz_bridge
+# looks for Harmonic's gz-transport13 first. The `gz-harmonic` metapackage brings the
+# -dev packages gz_bridge compiles against and the `gz` CLI the entrypoint runs; it is
+# installed without recommends, as PX4's installer installs its own Gazebo.
+RUN wget -q https://packages.osrfoundation.org/gazebo.gpg \
+        -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+        > /etc/apt/sources.list.d/gazebo-stable.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gz-harmonic \
+    && rm -rf /var/lib/apt/lists/* \
+    && gz sim --versions
+
+# ---------------------------------------------------------------------------
+FROM gz AS px4
+
+ARG PX4_VERSION
+ARG DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 WORKDIR /opt
 # --depth 1 on the tag, not a branch: reproducible, and avoids pulling PX4's full
@@ -34,12 +64,16 @@ RUN git clone --branch "${PX4_VERSION}" --recursive --depth 1 \
         https://github.com/PX4/PX4-Autopilot.git PX4-Autopilot
 
 WORKDIR /opt/PX4-Autopilot
-# PX4's own dependency installer: toolchain, Python deps, and — on Ubuntu 22.04 — the
-# matching Gazebo Harmonic release from packages.osrfoundation.org. This is the single
-# source of truth for "which apt packages PX4 needs", which is why DL3008 (pin apt
-# versions) is suppressed repo-wide for this file rather than hand-duplicated here
-# (see ../.hadolint.yaml).
-RUN ./Tools/setup/ubuntu.sh --no-nuttx \
+# PX4's own dependency installer: compiler toolchain and the Python packages its build
+# generates code with. This is the single source of truth for "what PX4 needs to build",
+# which is why DL3008 (pin apt versions) is suppressed for this file rather than
+# hand-duplicated here (see ../.hadolint.yaml).
+#
+# Those Python packages go to /root/.local and include NumPy 2 — which must never reach
+# the runtime stage: ROS 2 Humble's message modules are compiled against NumPy 1, and
+# with NumPy 2 first on the path every ROS Python node (rosbridge, the coordination
+# nodes) fails to import its messages. Only the built tree leaves this stage.
+RUN ./Tools/setup/ubuntu.sh --no-nuttx --no-sim-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Compiles PX4 SITL only. Not `make px4_sitl_default gz_x500`: in PX4 v1.15, gz_x500 is
@@ -49,35 +83,53 @@ RUN ./Tools/setup/ubuntu.sh --no-nuttx \
 # by PX4_SIM_MODEL in simulation/px4-configs/x500_common.env.
 RUN make px4_sitl_default
 
+# CMake leaves gz_bridge out silently when it cannot find Gazebo, and the image would
+# then build fine and fly nothing. Fail here instead.
+RUN test -n "$(find build/px4_sitl_default -name 'libmodules__simulation__gz_bridge.a' -print -quit)" \
+    || { echo "PX4 was built without gz_bridge: Gazebo's gz-transport was not found" >&2; exit 1; }
+
 # ---------------------------------------------------------------------------
-FROM ros:humble-ros-base
+FROM gz
 
 ARG DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# rosbridge is what SwarmApi.Api connects to; MAVROS bridges each PX4 instance's onboard
+# MAVLink port into ROS 2 for the coordination nodes. MAVROS refuses to start without
+# its geoid dataset, which is not in the package — so the build fails here, not the
+# first flight, if the download did not land.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        git \
-        ca-certificates \
-        ros-humble-rosbridge-suite \
+        geographiclib-tools \
         libgl1 \
         libgl1-mesa-dri \
         mesa-utils \
+        python3-colcon-common-extensions \
+        ros-humble-mavros \
+        ros-humble-rosbridge-suite \
         tmux \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && /opt/ros/humble/lib/mavros/install_geographiclib_datasets.sh
 
-COPY --from=builder /opt/PX4-Autopilot /opt/PX4-Autopilot
-# The runtime stage needs the Gazebo *runtime* libraries the builder stage's compiler
-# toolchain does not pull in on its own; re-running the same installer here is what
-# actually gets `gz sim` on PATH in this stage rather than assuming it copied over.
-WORKDIR /opt/PX4-Autopilot
-RUN ./Tools/setup/ubuntu.sh --no-nuttx \
-    && rm -rf /var/lib/apt/lists/*
+# The dataset script reports a failed download and exits 0 anyway.
+RUN compgen -G "/usr/share/GeographicLib/geoids/egm96-5*" \
+    || compgen -G "/usr/local/share/GeographicLib/geoids/egm96-5*" \
+    || { echo "GeographicLib geoid dataset egm96-5 is missing; MAVROS would not start" >&2; exit 1; }
+
+COPY --from=px4 /opt/PX4-Autopilot /opt/PX4-Autopilot
+
+# The coordination package last, so a change to it rebuilds these layers only — not PX4.
+COPY swarm_coordination /opt/swarmsim/ws/src/swarm_coordination
+WORKDIR /opt/swarmsim/ws
+RUN source /opt/ros/humble/setup.bash \
+    && colcon build --packages-select swarm_coordination \
+    && rm -rf build log
 
 COPY simulation/worlds /opt/swarmsim/worlds
 COPY simulation/px4-configs /opt/swarmsim/px4-configs
 COPY docker/entrypoint.sh /opt/swarmsim/entrypoint.sh
 RUN chmod +x /opt/swarmsim/entrypoint.sh
+WORKDIR /opt/swarmsim
 
 # 1 = Gazebo server only (no GPU/display needed); 0 = also start the GUI. Interpreted
 # by entrypoint.sh, not by PX4 — PX4's own script treats any non-empty value as headless.

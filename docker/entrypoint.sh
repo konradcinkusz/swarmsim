@@ -23,6 +23,7 @@ set -euo pipefail
 SWARMSIM_ROOT="${SWARMSIM_ROOT:-/opt/swarmsim}"
 PX4_DIR="${PX4_DIR:-/opt/PX4-Autopilot}"
 ROS_SETUP="${ROS_SETUP:-/opt/ros/humble/setup.bash}"
+COORDINATION_SETUP="${COORDINATION_SETUP:-/opt/swarmsim/ws/install/setup.bash}"
 PX4_BIN="${PX4_DIR}/build/px4_sitl_default/bin/px4"
 CONFIG_DIR="${SWARMSIM_ROOT}/px4-configs"
 WORLD_DIR="${SWARMSIM_ROOT}/worlds"
@@ -135,7 +136,21 @@ for cfg in "${configs[@]}"; do
   sessions+=("${namespace}")
 done
 
-log "${#sessions[@]} PX4 SITL instance(s) running; rosbridge on :9090"
+# --- ROS 2 coordination: MAVROS per drone, controllers, dispatcher, aggregator ----------
+# SWARM_COORDINATION=0 leaves PX4 bare (M0's console-only check, or bring-your-own nodes).
+if [[ "${SWARM_COORDINATION:-1}" == "1" ]]; then
+  [[ -f "${COORDINATION_SETUP}" ]] || die "${COORDINATION_SETUP} not found — was swarm_coordination built into the image?"
+  coordination=$(printf 'set +u; source %q; source %q; exec ros2 launch swarm_coordination spawn_swarm.launch.py with_mavros:=true px4_config_dir:=%q drone_count:=%q' \
+    "${ROS_SETUP}" "${COORDINATION_SETUP}" "${CONFIG_DIR}" "${#configs[@]}")
+  log "starting swarm_coordination for ${#configs[@]} drone(s): MAVROS, controllers, dispatcher, aggregator"
+  tmux new-session -d -s coordination -x 200 -y 50 "bash -c $(printf '%q' "${coordination}")"
+  tmux pipe-pane -o -t coordination "cat >> ${LOG_DIR}/coordination.log"
+  sessions+=("coordination")
+else
+  log "SWARM_COORDINATION=0: PX4 only, no ROS 2 coordination nodes"
+fi
+
+log "${#sessions[@]} session(s) running; rosbridge on :9090"
 log "attach to a console with: docker compose exec sim tmux attach -t <name>"
 log "sessions: ${sessions[*]}"
 
