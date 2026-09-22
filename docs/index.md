@@ -54,10 +54,10 @@ unreachable is reported as `Disconnected`, never replaced by the simulated one. 
 
 | # | Scope | Status |
 |---|---|---|
-| M0 | One drone (x500) spawns in Gazebo, responds to `commander takeoff` | Implemented; the SITL smoke job flies it, pending its first green run |
-| M1 | 3-5 PX4 SITL instances, namespaced ROS 2 topics per drone | Implemented; same as M0 (three drones) |
+| M0 | One drone (x500) spawns in Gazebo, responds to `commander takeoff` | Implemented; flown by the SITL smoke job |
+| M1 | 3-5 PX4 SITL instances, namespaced ROS 2 topics per drone | Implemented; the SITL smoke job flies three |
 | M2 | Waypoint-following and leader-follower formation, no collisions | Implemented, unit tested; flown by the SITL smoke job |
-| M3 | Missions in, swarm state out, abort and land-all, < 1s state latency | Implemented, integration tested; latency measured by the SITL smoke job |
+| M3 | Missions in, swarm state out, abort and land-all, < 1s state latency | Implemented, integration tested; flown by the SITL smoke job, p95 state age 0.2 s |
 | M4 | Real-time swarm status readable without a terminal | Implemented |
 | M5 | Natural-language mission layer | Out of scope for this phase |
 

@@ -76,10 +76,10 @@ every recorded deviation with its reasoning: [`docs/architecture/`](docs/archite
 
 | # | Scope | Status |
 |---|---|---|
-| M0 | Docker Compose environment; one drone (x500) spawns in Gazebo, responds to `commander takeoff` | Implemented; flown by the SITL smoke job, **pending its first green run** — see [note](#m0-manual-verification) |
-| M1 | 3-5 PX4 SITL instances in one world, namespaced ROS 2 topics per drone | Implemented (`simulation/px4-configs/`, `docker/entrypoint.sh`); same as M0 — the smoke job flies three |
-| M2 | Waypoint-following and leader-follower formation, no collisions | Implemented, unit tested (`swarm_coordination/`, `backend/.../Formation.cs`); flown by the SITL smoke job |
-| M3 | Missions in (`POST /api/missions`, abort, land-all), swarm state out (`GET /api/swarm/state`), < 1s state latency | Implemented; integration tested against the simulated swarm and an in-process rosbridge; latency measured by the SITL smoke job |
+| M0 | Docker Compose environment; one drone (x500) spawns in Gazebo, responds to `commander takeoff` | Implemented; flown by the SITL smoke job — see [note](#m0-manual-verification) |
+| M1 | 3-5 PX4 SITL instances in one world, namespaced ROS 2 topics per drone | Implemented (`simulation/px4-configs/`, `docker/entrypoint.sh`); the SITL smoke job flies three |
+| M2 | Waypoint-following and leader-follower formation, no collisions | Implemented, unit tested (`swarm_coordination/`, `backend/.../Formation.cs`); the SITL smoke job flies waypoint lanes and a line formation |
+| M3 | Missions in (`POST /api/missions`, abort, land-all), swarm state out (`GET /api/swarm/state`), < 1s state latency | Implemented; integration tested against the simulated swarm and an in-process rosbridge; flown end to end by the SITL smoke job, p95 state age 0.2 s |
 | M4 | Real-time swarm status readable without a terminal | Implemented (`backend/src/SwarmApi.Api/wwwroot/`) |
 | M5 | Natural-language mission layer | Out of scope for this repository's current phase |
 
@@ -90,11 +90,13 @@ runner (headless, CPU only) and runs `docker/tests/sitl_smoke.py` against the AP
 drone reported on its pad, a waypoint mission flown to completion and landed where it
 should, a formation mission aborted into a landing, and the age of the swarm state
 measured against M3's one-second budget. It runs on pull requests that touch what the
-image or the API is built from, nightly, and on demand. Until it has passed once, these
-rows have no run behind them — until 2026-09-22 the stack could not even have started
-from a clone (see
-[`docs/adr/0004-ci-scope-for-simulation-stack.md`](docs/adr/0004-ci-scope-for-simulation-stack.md)
-and the P13 row in [`docs/architecture/DEVIATIONS.md`](docs/architecture/DEVIATIONS.md)).
+image or the API is built from, nightly, and on demand. It first passed on 2026-09-22
+([run](https://github.com/konradcinkusz/swarmsim/actions/runs/35796734843)). The
+waypoint mission flew and landed in 28 s, and the p95 state age at the API was 0.2 s.
+The aborted formation was on the ground 14 s after the abort. What it took to get there
+is in
+[`docs/adr/0004-ci-scope-for-simulation-stack.md`](docs/adr/0004-ci-scope-for-simulation-stack.md):
+nothing below the SITL layer had caught any of it.
 The Gazebo GUI stays a manual check: **if you run the GUI walkthrough below, please
 report the result in an issue.**
 
