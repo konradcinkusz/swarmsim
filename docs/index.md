@@ -51,8 +51,8 @@ deterministic in-memory swarm when no simulation is reachable. See
 
 | # | Scope | Status |
 |---|---|---|
-| M0 | One drone (x500) spawns in Gazebo, responds to `commander takeoff` | Implemented; runtime verified manually only |
-| M1 | 3-5 PX4 SITL instances, namespaced ROS 2 topics per drone | Implemented; manual verification |
+| M0 | One drone (x500) spawns in Gazebo, responds to `commander takeoff` | Implemented; not yet verified by any run |
+| M1 | 3-5 PX4 SITL instances, namespaced ROS 2 topics per drone | Implemented; not yet verified by any run |
 | M2 | Waypoint-following and leader-follower formation, no collisions | Implemented, unit tested |
 | M3 | `POST /api/missions`, `GET /api/swarm/state`, < 1s state latency | Implemented, integration tested |
 | M4 | Real-time swarm status readable without a terminal | Implemented |
