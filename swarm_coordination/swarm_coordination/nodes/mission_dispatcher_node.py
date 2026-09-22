@@ -31,7 +31,14 @@ class MissionDispatcherNode(Node):
         self.declare_parameter("drones", ["drone_1"])
         self._drones = [str(d) for d in self.get_parameter("drones").value]
 
+        # Every drone's publishers exist from the start. A ROS 2 publisher created when the
+        # first mission arrives has not yet been matched with its subscribers, and the one
+        # message it sends straight away is lost — the SITL smoke's drones sat on their pads
+        # with a mission Active for seven minutes that way.
         self._publishers: dict[str, object] = {}
+        for drone in self._drones:
+            for topic in ("mission/assignment", "mission/slot", "mission/command"):
+                self._publisher(f"/{drone}/{topic}")
         self._active_pub = self.create_publisher(String, "/swarm/active_mission", LATCHED)
         self.create_subscription(String, "/swarm/mission", self._on_mission, 10)
         self.create_subscription(String, "/swarm/command", self._on_command, 10)

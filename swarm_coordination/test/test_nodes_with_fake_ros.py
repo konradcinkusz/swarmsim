@@ -37,6 +37,16 @@ def _json(msg):
     return json.loads(msg.data)
 
 
+def test_the_dispatcher_can_reach_every_drone_before_the_first_mission(bus):
+    # A ROS 2 publisher created on demand is not yet matched with its subscribers, and
+    # the one message it sends at once is lost: every drone's topics exist from the start.
+    _node(bus, "mission_dispatcher_node", "MissionDispatcherNode", drones=["drone_1", "drone_2"])
+
+    for drone in ("drone_1", "drone_2"):
+        for topic in ("mission/assignment", "mission/slot", "mission/command"):
+            assert f"/{drone}/{topic}" in bus.publishers
+
+
 def test_the_dispatcher_turns_the_contract_example_into_a_path_and_two_slots(bus):
     _node(
         bus,

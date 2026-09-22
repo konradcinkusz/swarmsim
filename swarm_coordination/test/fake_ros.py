@@ -20,6 +20,7 @@ class Bus:
     def __init__(self):
         self.subscribers = defaultdict(list)
         self.published = defaultdict(list)
+        self.publishers = []  # topics, in the order their publishers were created
         self.time_ns = 0
         self.namespace = "/"
         self.nodes = []
@@ -148,7 +149,9 @@ class Node:
         return _Parameter(self._parameters[name])
 
     def create_publisher(self, msg_type, topic, qos):
-        return _Publisher(BUS.resolve(self._namespace, topic), qos)
+        publisher = _Publisher(BUS.resolve(self._namespace, topic), qos)
+        BUS.publishers.append(publisher.topic)
+        return publisher
 
     def create_subscription(self, msg_type, topic, callback, qos):
         subscription = _Subscription(BUS.resolve(self._namespace, topic), callback)
