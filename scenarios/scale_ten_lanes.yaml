@@ -1,0 +1,22 @@
+version: 1
+name: scale_ten_lanes
+description: >
+  Ten drones — twice what the SITL stack flies — on ten parallel lanes 30 m out, with
+  GPS noise. Every lane is flown, every drone lands at the end of its own lane, and no
+  two drones come within 1.5 m of each other.
+drones: 10
+duration_s: 70
+world:
+  gps_noise_std_m: 0.2
+events:
+  - at_s: 1
+    mission:
+      type: waypoint
+      waypoints: [[0, 0, 5], [30, 0, 5]]
+      drone_count: 10
+      spacing_m: 3
+assertions:
+  - min_separation: {min_m: 1.5}
+  - mission_completes: {within_s: 60}
+  - final_position: {drone: drone_1, position: [30, 0, 0], tolerance_m: 1.0}
+  - final_position: {drone: drone_10, position: [30, 27, 0], tolerance_m: 1.0}

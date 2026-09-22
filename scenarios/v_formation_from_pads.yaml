@@ -1,0 +1,25 @@
+version: 1
+name: v_formation_from_pads
+description: >
+  A three-drone V formation launched from the pads. The V puts drone_3 on the far side
+  of the leader, but every pad is on the near side: the straight line to drone_3's slot
+  runs through drone_2, which is on its way to its own slot, just after takeoff.
+drones: 3
+duration_s: 60
+expect: fail
+expect_reason: >
+  The reference swarm assigns formation slots without looking at where the drones
+  start and has no deconfliction in flight, so a V launched from a row of pads makes a
+  follower cross its neighbours. Fixing it means choosing the leader and each follower's
+  side from the pad layout, or deconflicting the plan before it is dispatched.
+events:
+  - at_s: 1
+    mission:
+      type: formation
+      formation: v
+      waypoints: [[0, 0, 6], [30, 0, 6]]
+      drone_count: 3
+      spacing_m: 3
+assertions:
+  - min_separation: {min_m: 2.0}
+  - mission_completes: {within_s: 55}

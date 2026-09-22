@@ -19,8 +19,9 @@ swarm_coordination/
 ├── commands.py          # rtl/land/hold → the PX4 flight mode that carries it out
 ├── drone_controller.py  # DroneController: everything one drone decides, per tick
 ├── mission_planning.py  # the /swarm/mission and /swarm/command payloads → a plan
+├── supervisor.py        # MissionSupervisor: who flies what; the battery policy
 ├── swarm_state.py       # per-drone readings → the /swarm/state payload
-├── scenarios/           # scenario-testing contract (Scenario/Verdict/Violation)
+├── scenarios/           # the scenario instrument: L0 simulator, SUT protocol, runner, mutants
 └── nodes/               # thin rclpy adapters over the modules above
     ├── drone_controller_node.py        # one per drone: MAVROS in, setpoints out
     ├── mission_dispatcher_node.py      # one per swarm: /swarm/mission → per-drone tasks
@@ -42,19 +43,25 @@ smoke run until 2026-09-22.
 
 1. `SwarmApi.Api` publishes the mission on `/swarm/mission` (a JSON string —
    `contracts/rosbridge/swarm_mission.v1.schema.json`).
-2. `mission_dispatcher_node` plans it (`mission_planning.plan_mission`): a waypoint
-   mission gives each drone its own copy of the route, offset sideways by the
-   formation spacing; a formation mission gives the leader (`drone_1`) the route and
-   every follower a slot relative to the leader. Each drone gets its task on
-   `/<drone>/mission/assignment` or `/<drone>/mission/slot`; the active mission is
-   latched on `/swarm/active_mission`. A mission that needs more drones than are
-   running is logged and ignored.
+2. `mission_dispatcher_node` hands it to `supervisor.MissionSupervisor`, which plans it
+   (`mission_planning.plan_mission`) onto the drones fit to fly — in id order, skipping
+   any whose battery is already below the threshold (20 %). A waypoint mission gives
+   each drone its own copy of the route, offset sideways by the formation spacing; a
+   formation mission gives the first of them the route and every other one a slot
+   relative to it. Each drone gets its task on `/<drone>/mission/assignment` or
+   `/<drone>/mission/slot`; the active mission is latched on `/swarm/active_mission`.
+   A mission that needs more fit drones than are running is rejected and logged.
+   While it flies, a drone whose battery drops below the threshold hands the rest of
+   its task to an idle drone and is sent home (`rtl`); with nobody idle, it is sent home
+   anyway and its task is reported dropped.
 3. Each `drone_controller_node` runs its `DroneController` at 10 Hz. It streams
    setpoints to `mavros/setpoint_position/local` before asking for OFFBOARD — PX4
    rejects the switch otherwise — then arms, retrying both until MAVROS reports them.
    It flies the task and, when it is done (the last waypoint reached, or the leader
    landed), hands the vehicle to PX4's `AUTO.LAND`. A command on `/swarm/command`
-   (`rtl`, `land`, `hold`) pre-empts all of it with the matching PX4 mode.
+   (`rtl`, `land`, `hold`) pre-empts all of it with the matching PX4 mode. A follower
+   that stops hearing its leader holds the slot it last knew; if the leader is still
+   silent after 5 s (`comms_timeout_s`), it gives up and returns to launch.
 4. `swarm_state_aggregator_node` combines every drone's position, armed state, flight
    mode, battery and mission progress into `/swarm/state` at 5 Hz. A mission is complete
    when every assigned drone has finished its task and disarmed.
@@ -112,24 +119,31 @@ per-drone input is the `drone_<n>.env` file.
 
 ## Scenario testing
 
-`scenarios/` is the contract a swarm-testing-as-a-service scenario library implements
-against: a `Scenario` is a named, self-contained test case (it owns its own setup and
-perturbation, so evaluating it is just `scenario.run()`), returning a `Verdict`
-(pass/fail plus, on failure, the concrete `Violation`s a future report/replay layer
-will render). There's no central registry to register into — each scenario is its own
-module that only imports from `scenarios/`, so multiple scenarios can be added in
-parallel without touching a shared file. See `scenarios/example_static_formation.py`
-for a minimal reference scenario, and `test/test_scenario_contract.py` for the contract
-tests.
+`scenarios/` is the instrument that flies the YAML scenarios in the repository's
+[`scenarios/`](../scenarios/README.md) directory ([ADR-0008](../docs/adr/0008-scenario-instrument.md)):
+
+| Module | What it is |
+|---|---|
+| `sim.py` | L0: a seeded kinematic stand-in for PX4 SITL + Gazebo — PX4's OFFBOARD, arming, failsafe, RTL and auto-disarm rules; wind, GPS noise, battery, and nothing more |
+| `sut.py` | The system-under-test protocol, and `ReferenceSwarm`: the modules above, wired as the ROS nodes wire them |
+| `spec.py` | Scenario files, validated against `contracts/scenario/scenario.v1.schema.json` |
+| `harness.py` | `run_scenario(spec, sut, seed)` → verdict and trace; a lossy network between the drones |
+| `assertions.py` | Measurements over the trace: separation, completion, landing, battery, formation error... |
+| `mutants.py` | Broken versions of the reference swarm, for the mutation check |
+| `runner.py`, `__main__.py` | The suite, JUnit/JSON/Markdown reports, and `python -m swarm_coordination.scenarios` |
+
+The scenarios test this package's product code — the battery policy lives in
+`supervisor.py` and the comms-loss policy in `drone_controller.py`, where the ROS nodes
+run them too — so a scenario can only pass by the swarm doing the right thing.
 
 ## Development
 
 ```bash
-pip install ruff pytest jsonschema
+pip install ruff pytest jsonschema pyyaml
 ruff check .
 pytest
 ```
 
 Both run in CI (`.github/workflows/ci.yml`, job `python`) on every push and PR.
-`jsonschema` is for `test/test_contracts.py`, which checks this package's messages
-against `contracts/rosbridge/`; it skips without it locally, never in CI.
+`jsonschema` and `pyyaml` are for the contract and scenario tests, which skip without
+them locally, never in CI; the ROS nodes need neither.

@@ -1,0 +1,23 @@
+version: 1
+name: formation_line
+description: >
+  Five drones take off from their pads into a line behind drone_1 and follow it 40 m
+  downrange, then land where the leader lands. Checks that the slots are held once
+  formed and that nobody comes close to anybody on the way in. A follower trails its
+  slot by about its speed over the position gain (2 m/s ÷ 1/s): the limit allows that
+  lag, not a formation that fell apart.
+drones: 5
+duration_s: 90
+events:
+  - at_s: 1
+    mission:
+      type: formation
+      formation: line
+      waypoints: [[0, 0, 6], [40, 0, 6]]
+      drone_count: 5
+      spacing_m: 3
+assertions:
+  - min_separation: {min_m: 1.5}
+  - formation_error: {max_m: 2.5, from_s: 20}
+  - mission_completes: {within_s: 75}
+  - all_landed: {by_s: 90}

@@ -1,0 +1,405 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/konradcinkusz/swarmsim/contracts/scenario/scenario.v1.schema.json",
+  "title": "swarmsim scenario (v1)",
+  "description": "A swarm scenario: a world, a timeline of events (missions, operator commands, injected faults) and assertions over what happened. Positions are world-frame ENU metres; drone_<n> starts on its pad at (0, 3(n-1), 0), as in simulation/px4-configs/.",
+  "type": "object",
+  "required": [
+    "version",
+    "name",
+    "description",
+    "drones",
+    "duration_s",
+    "events",
+    "assertions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "drones": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    },
+    "duration_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 3600
+    },
+    "expect": {
+      "description": "'fail' records a known limitation of the reference swarm: the scenario must fail, and a pass is reported as unexpected.",
+      "enum": [
+        "pass",
+        "fail"
+      ]
+    },
+    "expect_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "world": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wind": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mean_m_s": {
+              "$ref": "#/$defs/vector"
+            },
+            "gust_std_m_s": {
+              "type": "number",
+              "minimum": 0
+            },
+            "gust_time_constant_s": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "gps_noise_std_m": {
+          "type": "number",
+          "minimum": 0
+        },
+        "battery": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "initial_pct": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "drain_pct_per_s": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    },
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/assertion"
+      }
+    }
+  },
+  "$defs": {
+    "vector": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "drone": {
+      "type": "string",
+      "pattern": "^drone_[1-9][0-9]*$"
+    },
+    "time": {
+      "type": "number",
+      "minimum": 0
+    },
+    "mission": {
+      "description": "Dispatched to the swarm as a /swarm/mission payload (contracts/rosbridge/swarm_mission.v1.schema.json).",
+      "type": "object",
+      "required": [
+        "type",
+        "waypoints",
+        "drone_count",
+        "spacing_m"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "waypoint",
+            "formation"
+          ]
+        },
+        "formation": {
+          "enum": [
+            "line",
+            "v"
+          ]
+        },
+        "waypoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/vector"
+          }
+        },
+        "drone_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "spacing_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "at_s"
+      ],
+      "minProperties": 2,
+      "maxProperties": 2,
+      "properties": {
+        "at_s": {
+          "$ref": "#/$defs/time"
+        },
+        "mission": {
+          "$ref": "#/$defs/mission"
+        },
+        "command": {
+          "description": "An operator command, dispatched as a /swarm/command payload.",
+          "enum": [
+            "rtl",
+            "land",
+            "hold"
+          ]
+        },
+        "battery": {
+          "description": "Fault: the drone's battery reads set_pct from now on.",
+          "type": "object",
+          "required": [
+            "drone",
+            "set_pct"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "drone": {
+              "$ref": "#/$defs/drone"
+            },
+            "set_pct": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            }
+          }
+        },
+        "comms_loss": {
+          "description": "Fault: every message to or from these drones is lost for duration_s.",
+          "type": "object",
+          "required": [
+            "drones",
+            "duration_s"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "drones": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/drone"
+              }
+            },
+            "duration_s": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "assertion": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "min_separation": {
+          "description": "No two airborne drones ever closer than min_m (truth, not reported positions).",
+          "type": "object",
+          "required": [
+            "min_m"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "min_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "from_s": {
+              "$ref": "#/$defs/time"
+            },
+            "to_s": {
+              "$ref": "#/$defs/time"
+            }
+          }
+        },
+        "mission_completes": {
+          "description": "The swarm reports the (last dispatched) mission complete within within_s of dispatch.",
+          "type": "object",
+          "required": [
+            "within_s"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "within_s": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "all_landed": {
+          "description": "Every drone on the ground and disarmed by by_s.",
+          "type": "object",
+          "required": [
+            "by_s"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "by_s": {
+              "$ref": "#/$defs/time"
+            }
+          }
+        },
+        "no_task_below_battery": {
+          "description": "No drone keeps flying under the swarm's control (OFFBOARD) for more than grace_s once its battery is below threshold_pct.",
+          "type": "object",
+          "required": [
+            "threshold_pct"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "threshold_pct": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "grace_s": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "reaches": {
+          "description": "The drone comes within tolerance_m of position between from_s (default 0) and by_s.",
+          "type": "object",
+          "required": [
+            "drone",
+            "position",
+            "tolerance_m",
+            "by_s"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "drone": {
+              "$ref": "#/$defs/drone"
+            },
+            "position": {
+              "$ref": "#/$defs/vector"
+            },
+            "tolerance_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "by_s": {
+              "$ref": "#/$defs/time"
+            },
+            "from_s": {
+              "$ref": "#/$defs/time"
+            }
+          }
+        },
+        "final_position": {
+          "description": "At the end of the run the drone is within tolerance_m of position.",
+          "type": "object",
+          "required": [
+            "drone",
+            "position",
+            "tolerance_m"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "drone": {
+              "$ref": "#/$defs/drone"
+            },
+            "position": {
+              "$ref": "#/$defs/vector"
+            },
+            "tolerance_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "formation_error": {
+          "description": "While airborne between from_s and to_s, every follower stays within max_m of its slot: the leader's true position plus the offset the (last) formation mission gives it.",
+          "type": "object",
+          "required": [
+            "max_m"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "max_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "leader": {
+              "$ref": "#/$defs/drone"
+            },
+            "from_s": {
+              "$ref": "#/$defs/time"
+            },
+            "to_s": {
+              "$ref": "#/$defs/time"
+            }
+          }
+        },
+        "never_mode": {
+          "description": "The drone's autopilot never enters mode (e.g. AUTO.RTL) during the run.",
+          "type": "object",
+          "required": [
+            "drone",
+            "mode"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "drone": {
+              "$ref": "#/$defs/drone"
+            },
+            "mode": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+version: 1
+name: follower_jammed_goes_home
+description: >
+  drone_2 and drone_3 lose all contact 20 s into a line formation and never get it
+  back. Past the 5 s comms timeout each must stop holding its last known slot, fly
+  home on its own and land on its pad, while the leader finishes the route alone.
+drones: 3
+duration_s: 120
+events:
+  - at_s: 1
+    mission:
+      type: formation
+      formation: line
+      waypoints: [[0, 0, 6], [60, 0, 6]]
+      drone_count: 3
+      spacing_m: 3
+  - at_s: 20
+    comms_loss: {drones: [drone_2, drone_3], duration_s: 200}
+assertions:
+  - reaches: {drone: drone_2, position: [0, 3, 0], tolerance_m: 1.0, from_s: 26, by_s: 90}
+  - reaches: {drone: drone_3, position: [0, 6, 0], tolerance_m: 1.0, from_s: 26, by_s: 90}
+  - final_position: {drone: drone_1, position: [60, 0, 0], tolerance_m: 1.0}
+  - all_landed: {by_s: 120}
+  - min_separation: {min_m: 1.5}

@@ -1,0 +1,24 @@
+version: 1
+name: low_battery_handover
+description: >
+  Three of four drones fly parallel lanes 60 m out; drone_4 waits on its pad. 12 s in,
+  drone_1's battery reads 18%, below the 20% threshold. The rest of its lane must go to
+  drone_4 and drone_1 must fly home — not keep flying its task on a depleted battery —
+  and the mission must still complete with every lane flown.
+drones: 4
+duration_s: 150
+events:
+  - at_s: 1
+    mission:
+      type: waypoint
+      waypoints: [[0, 0, 5], [60, 0, 5]]
+      drone_count: 3
+      spacing_m: 3
+  - at_s: 12
+    battery: {drone: drone_1, set_pct: 18}
+assertions:
+  - no_task_below_battery: {threshold_pct: 20, grace_s: 3}
+  - reaches: {drone: drone_1, position: [0, 0, 0], tolerance_m: 1.0, from_s: 13, by_s: 60}
+  - final_position: {drone: drone_4, position: [60, 0, 0], tolerance_m: 1.0}
+  - mission_completes: {within_s: 140}
+  - min_separation: {min_m: 1.5}

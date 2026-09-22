@@ -1,0 +1,16 @@
+version: 1
+name: impossible_deadline
+description: >
+  A scenario that must fail: no swarm finishes a 20 m route within 5 s. The runner's
+  tests and the CI check of the scenario action's failure path both use it.
+drones: 2
+duration_s: 30
+events:
+  - at_s: 1
+    mission:
+      type: waypoint
+      waypoints: [[0, 0, 5], [20, 0, 5]]
+      drone_count: 2
+      spacing_m: 3
+assertions:
+  - mission_completes: {within_s: 5}
