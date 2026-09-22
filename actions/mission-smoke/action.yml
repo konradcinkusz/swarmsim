@@ -1,11 +1,12 @@
 # =============================================================================
-# swarmsim: mission-smoke-test — PRE-AUTH, PRE-HOSTED PROTOTYPE (issue #19)
+# swarmsim: mission-smoke-test — checks a running SwarmApi.Api end to end
 # =============================================================================
 # What this is:
-#   A proof-of-concept composite Action that proves the CI-check *wiring* for a
-#   swarmsim mission: it POSTs a mission definition to a running SwarmApi.Api
-#   instance, then polls its swarm state a few times to make sure the round
-#   trip works and nothing has gone visibly wrong.
+#   A composite Action for a deployment smoke test: it POSTs a mission definition
+#   to a running SwarmApi.Api instance, then polls its swarm state a few times to
+#   make sure the round trip works and nothing has gone visibly wrong. CI runs it
+#   against the API it starts itself (.github/workflows/ci.yml, job
+#   `mission-smoke-action`), once expecting a pass and once a failure.
 #
 # What this is NOT:
 #   - Not a hosted product endpoint. `api-url` is supplied by the caller and is
@@ -17,26 +18,20 @@
 #     `api-token` (a bearer token from the authservice instance the API trusts)
 #     when the API runs in Enforced mode — docs/adr/0005-mcp-server-and-bearer-auth.md.
 #     Only the mission POST needs it; state reads stay open.
-#   - NOT real collision/violation detection. As of this writing, the
-#     SwarmApi.Domain model (backend/src/SwarmApi.Domain/) has no
-#     "violation"/"collision" concept at all — that will come from the
-#     scenario-library + report work in issues #12-#18, landing in parallel
-#     with this one, and is not yet wired into this API. This action therefore
-#     does NOT invent a fake collision-detection API contract. The only
-#     degraded-state signal it checks is one the API genuinely exposes today:
-#     a drone reported with status "Error" in GET /api/swarm/state
-#     (SwarmApi.Domain.DroneStatus.Error). Once #12-#18 land and expose a real
-#     violation/collision field, this action should be updated to check it —
-#     until then, treat this action as proving the CI-check plumbing only.
+#   - Not a scenario check. Collision, separation, battery and comms behaviour are
+#     judged by the scenario action at this repository's root (`uses:
+#     konradcinkusz/swarmsim@<ref>`), which flies scenarios in a simulation inside
+#     the caller's job. This action proves a *running* API answers: the mission is
+#     accepted, and the swarm state it reports is well formed and reports no drone
+#     in status "Error".
 # =============================================================================
 
 name: "SwarmSim Mission Smoke Test"
 description: >-
-  Proof-of-concept: POSTs a mission definition to a running SwarmApi.Api instance and
-  polls its swarm state a few times, failing on HTTP errors, malformed responses, or a
-  drone-reported "Error" status. Does not host or deploy the API, and does not detect
-  real collisions/violations (that needs issues #12-#18 wired in first — see the header
-  comment above).
+  POSTs a mission definition to a running SwarmApi.Api instance and polls its swarm state
+  a few times, failing on HTTP errors, malformed responses, or a drone-reported "Error"
+  status. Does not host or deploy the API; for scenario checks (separation, battery,
+  comms) use the scenario action at the repository root.
 author: "swarmsim"
 
 inputs:
@@ -225,7 +220,7 @@ runs:
           echo "bridgeMode=$bridge_mode, drones-with-status-Error=$error_drone_count"
 
           if [ "$error_drone_count" != "0" ]; then
-            echo "::error::$error_drone_count drone(s) reported status \"Error\" in GET /api/swarm/state. This is the one degraded-state signal SwarmApi exposes today (DroneStatus.Error) -- NOT a real collision/violation check (see this action's header comment: that needs issues #12-#18 wired into the API first)."
+            echo "::error::$error_drone_count drone(s) reported status \"Error\" in GET /api/swarm/state. DroneStatus.Error is the one per-drone fault SwarmApi reports; separation, battery and comms behaviour are the scenario action's job (see this action's header comment)."
             exit 1
           fi
 

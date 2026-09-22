@@ -1,0 +1,123 @@
+# =============================================================================
+# swarmsim: scenario check — swarm scenarios as a CI check, run inside your job
+# =============================================================================
+# Flies YAML scenarios (contracts/scenario/scenario.v1.schema.json) against a swarm in
+# a seeded kinematic simulation (L0) and fails the job when one fails. Everything runs
+# on the runner that calls it — the way a coverage tool runs your tests locally and only
+# reports: no service is called, nothing leaves the job. It writes a JUnit report and a
+# job summary.
+#
+# The swarm under test is swarmsim's own reference swarm unless `sut` names another one:
+# MODULE:ATTRIBUTE importable from the workspace, implementing the protocol in
+# swarm_coordination/swarm_coordination/scenarios/sut.py.
+#
+#   - uses: konradcinkusz/swarmsim@<ref>
+#     with:
+#       scenarios: scenarios          # files or directories
+#       seeds: "3"
+#
+# What it is not: a flight-dynamics simulator. L0 checks the swarm's decisions; the SITL
+# smoke (.github/workflows/sim-smoke.yml) checks that PX4 flies them.
+# =============================================================================
+
+name: "SwarmSim Scenario Check"
+description: >-
+  Runs swarm scenarios (YAML) against a system under test in a seeded kinematic
+  simulation inside this job, and fails it when a scenario fails. Writes a JUnit report
+  and a job summary; calls no external service.
+author: "swarmsim"
+branding:
+  icon: "check-circle"
+  color: "blue"
+
+inputs:
+  scenarios:
+    description: "Scenario files or directories, space-separated, relative to the workspace."
+    required: false
+    default: "scenarios"
+  seeds:
+    description: "How many seeds each scenario runs with; it passes only if every seed does."
+    required: false
+    default: "3"
+  seed:
+    description: "The first seed. The same seed reproduces a run exactly."
+    required: false
+    default: "1"
+  sut:
+    description: >-
+      MODULE:ATTRIBUTE of the swarm to test, importable from the workspace (a class, a
+      factory, or an instance). Empty: swarmsim's reference swarm.
+    required: false
+    default: ""
+  mutation-check:
+    description: >-
+      "true": also run every scenario against deliberately broken versions of the
+      reference swarm, and fail if a scenario catches none of them or a broken swarm
+      passes them all. Reference swarm only.
+    required: false
+    default: "false"
+  junit-path:
+    description: "Where to write the JUnit XML report."
+    required: false
+    default: "swarmsim-scenarios.xml"
+  job-summary:
+    description: '"true": append the Markdown report to the job summary.'
+    required: false
+    default: "true"
+  python-version:
+    description: "Python the runner runs on."
+    required: false
+    default: "3.11"
+
+outputs:
+  passed:
+    description: '"true" when every scenario met its expectation, "false" otherwise.'
+    value: ${{ steps.run.outputs.passed }}
+  junit-path:
+    description: "The JUnit XML report."
+    value: ${{ steps.run.outputs.junit-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install the scenario runner's dependencies
+      shell: bash
+      run: python -m pip install --disable-pip-version-check --quiet "pyyaml>=6" "jsonschema>=4.18"
+
+    - name: Run the scenarios
+      id: run
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        SCENARIOS: ${{ inputs.scenarios }}
+        SEEDS: ${{ inputs.seeds }}
+        SEED: ${{ inputs.seed }}
+        SUT: ${{ inputs.sut }}
+        MUTATION: ${{ inputs.mutation-check }}
+        JUNIT: ${{ inputs.junit-path }}
+        SUMMARY: ${{ inputs.job-summary }}
+      run: |
+        set -euo pipefail
+        read -r -a paths <<< "$SCENARIOS"
+        args=(run "${paths[@]}" --seed "$SEED" --seeds "$SEEDS" --junit "$JUNIT")
+        if [ "$SUMMARY" = "true" ]; then args+=(--markdown "$GITHUB_STEP_SUMMARY"); fi
+        if [ -n "$SUT" ]; then args+=(--sut "$SUT"); fi
+        if [ "$MUTATION" = "true" ]; then args+=(--mutants); fi
+
+        echo "junit-path=$JUNIT" >> "$GITHUB_OUTPUT"
+        set +e
+        PYTHONPATH="$ACTION_PATH/swarm_coordination${PYTHONPATH:+:$PYTHONPATH}" \
+          python -m swarm_coordination.scenarios "${args[@]}"
+        status=$?
+        set -e
+        if [ "$status" -eq 0 ]; then
+          echo "passed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          echo "::error::swarm scenarios failed (exit $status) — the report above and $JUNIT say which and why"
+        fi
+        exit "$status"

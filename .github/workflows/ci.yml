@@ -64,16 +64,106 @@ jobs:
         with:
           python-version: "3.11"
 
-      # jsonschema is test-only: the contract tests validate against contracts/rosbridge/
-      # and skip without it, which CI must never do.
+      # jsonschema and pyyaml are for the contract and scenario tests, which skip without
+      # them — something CI must never do. The ROS nodes need neither.
       - name: Install dependencies
-        run: pip install ruff pytest jsonschema
+        run: pip install ruff pytest jsonschema pyyaml
 
       - name: ruff check
         run: ruff check .
 
       - name: pytest
         run: pytest -v
+
+  scenarios:
+    name: Swarm scenarios (L0, 3 seeds, mutation check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The repository's own scenario action, run the way a caller runs it — so the suite
+      # and the action are checked together, on both of their outcomes.
+      - name: Scenario suite (must pass)
+        id: suite
+        uses: ./
+        with:
+          scenarios: scenarios
+          seeds: "3"
+          mutation-check: "true"
+          junit-path: scenario-results.xml
+
+      - name: A failing scenario (must fail)
+        id: failing
+        continue-on-error: true
+        uses: ./
+        with:
+          scenarios: swarm_coordination/test/fixtures/scenarios
+          seeds: "1"
+          junit-path: failing-scenario-results.xml
+          job-summary: "false"
+
+      - name: The action passed the suite and failed the failing scenario
+        env:
+          SUITE_PASSED: ${{ steps.suite.outputs.passed }}
+          FAILING_OUTCOME: ${{ steps.failing.outcome }}
+          FAILING_PASSED: ${{ steps.failing.outputs.passed }}
+        run: |
+          test "$SUITE_PASSED" = "true"
+          test "$FAILING_OUTCOME" = "failure" \
+            || { echo "::error::the scenario action passed a scenario that must fail"; exit 1; }
+          test "$FAILING_PASSED" = "false"
+          grep -q 'failures="1"' failing-scenario-results.xml
+
+      - name: Upload scenario reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scenario-results
+          path: "*scenario-results.xml"
+
+  mission-smoke-action:
+    name: Mission smoke action (against a local API)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Start SwarmApi.Api (simulated swarm, Open auth)
+        run: |
+          dotnet run --project backend/src/SwarmApi.Api --urls http://127.0.0.1:5080 > api.log 2>&1 &
+          for _ in $(seq 1 90); do
+            curl -fsS http://127.0.0.1:5080/alive >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          cat api.log
+          exit 1
+
+      - name: A valid mission (must pass)
+        uses: ./actions/mission-smoke
+        with:
+          api-url: http://127.0.0.1:5080
+          mission-json: >-
+            {"name":"CI smoke","type":"waypoint","waypoints":[{"x":0,"y":0,"z":5},{"x":10,"y":0,"z":5}],"droneCount":2,"spacingMeters":3}
+          poll-attempts: "3"
+          poll-interval-seconds: "1"
+
+      - name: A mission outside the safety envelope (must fail)
+        id: rejected
+        continue-on-error: true
+        uses: ./actions/mission-smoke
+        with:
+          api-url: http://127.0.0.1:5080
+          mission-json: >-
+            {"name":"Too many","type":"waypoint","waypoints":[{"x":0,"y":0,"z":5}],"droneCount":99,"spacingMeters":3}
+          poll-attempts: "1"
+
+      - name: The action failed the rejected mission
+        env:
+          OUTCOME: ${{ steps.rejected.outcome }}
+        run: test "$OUTCOME" = "failure" || { echo "::error::the mission smoke action passed a mission the API rejects"; exit 1; }
 
   mcp-server:
     name: Python lint & test (mcp_server)
