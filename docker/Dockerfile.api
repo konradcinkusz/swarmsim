@@ -29,6 +29,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
 
 COPY --from=build /app .
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/swarmsim-api
 
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
@@ -36,7 +37,8 @@ EXPOSE 8080
 LABEL org.opencontainers.image.source="https://github.com/konradcinkusz/swarmsim"
 LABEL org.opencontainers.image.description="SwarmApi — mission definition and swarm-state REST API"
 
-# The aspnet base image ships a non-root `app` user (uid 64198) since .NET 8.
-USER app
-
-ENTRYPOINT ["dotnet", "SwarmApi.Api.dll"]
+# The API runs as the aspnet base image's non-root `app` user (uid 64198, since .NET 8).
+# The container itself starts as root so the entrypoint can hand a mounted volume to that
+# user first (Fly.io mounts volumes owned by root), then drops to it with setpriv —
+# backend/docker-entrypoint.sh. Without a volume it drops straight away.
+ENTRYPOINT ["/usr/local/bin/swarmsim-api"]

@@ -1,0 +1,187 @@
+name: Deploy (Fly.io)
+
+# Tag-driven deploy of swarmsim-api (architecture-standards P12; FLY-IO-DEPLOYMENT §10-§11):
+#
+#   push tag v*
+#     ├── gate            FLY_API_TOKEN present? the auth authority configured?
+#     ├── test            dotnet test: a tag whose tests fail deploys nothing
+#     ├── detect-changes  backend/, docker/Dockerfile.api or the Fly config changed since the
+#     │                   previous tag — or the Fly app does not exist yet (always selected)
+#     ├── build           the image, once → registry.fly.io/swarmsim-api:<label>
+#     └── deploy          that image; then /health must say Enforced and File
+#
+# One-time setup is in flyio/SECRETS.md: FLY_API_TOKEN in the `production` environment and
+# the SWARM_AUTH_AUTHORITY repository variable. Without the token nothing runs and a notice
+# says so; without the authority the deploy fails, because swarmsim-api refuses to run
+# Open (Auth__Required, docs/adr/0011). The Gazebo/PX4 stack is not deployed from here:
+# it runs per tenant run (docs/adr/0012).
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flyio-deploy
+  cancel-in-progress: false
+
+env:
+  FLY_APP: swarmsim-api # = `app` in flyio/swarmsim-api.fly.toml
+  FLY_CONFIG: flyio/swarmsim-api.fly.toml
+  FLY_REGION: fra
+  FLY_VOLUME: swarmsim_api_data
+
+jobs:
+  gate:
+    name: Deploy gate
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          AUTHORITY: ${{ vars.SWARM_AUTH_AUTHORITY }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::notice::FLY_API_TOKEN is not set in the production environment, so nothing is deployed (flyio/SECRETS.md)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$AUTHORITY" ]; then
+            echo "::error::SWARM_AUTH_AUTHORITY is not set. swarmsim-api runs Enforced (Auth__Required) and would refuse to start without it (flyio/SECRETS.md)."
+            exit 1
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: .NET tests
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "8.0.x"
+      - run: dotnet test backend/SwarmPlatform.sln -c Release
+
+  detect-changes:
+    name: Detect changes
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      api: ${{ steps.detect.outputs.api }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      - id: detect
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if ! flyctl apps list --json | jq -e --arg a "$FLY_APP" '.[] | select((.Name // .name) == $a)' >/dev/null; then
+            echo "Fly app $FLY_APP does not exist yet: selected."
+            echo "api=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          previous=$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)
+          if [ "$EVENT" = "workflow_dispatch" ] || [ -z "$previous" ]; then
+            echo "api=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$previous" "$GITHUB_SHA" -- backend docker/Dockerfile.api "$FLY_CONFIG"; then
+            echo "Nothing swarmsim-api is built from changed since $previous: not redeployed."
+            echo "api=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "api=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build and push the image
+    needs: [test, detect-changes]
+    if: needs.detect-changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      image: ${{ steps.label.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      - uses: docker/setup-buildx-action@v3
+
+      # The registry namespace is the app, so a first deploy creates the app before pushing
+      # to it — from here, never from a laptop (FLY-IO-DEPLOYMENT §11).
+      - name: Ensure the Fly app exists
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_ORG: ${{ vars.FLY_ORG }}
+        run: |
+          if flyctl apps list --json | jq -e --arg a "$FLY_APP" '.[] | select((.Name // .name) == $a)' >/dev/null; then
+            echo "App $FLY_APP already exists."
+          else
+            flyctl apps create "$FLY_APP" --org "${FLY_ORG:-personal}" --yes
+          fi
+
+      - name: Log in to registry.fly.io
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl auth docker
+
+      - id: label
+        run: echo "image=registry.fly.io/${FLY_APP}:${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: docker/Dockerfile.api
+          push: true
+          tags: ${{ steps.label.outputs.image }}
+          cache-from: type=gha,scope=swarmsim-api
+          cache-to: type=gha,scope=swarmsim-api,mode=max
+
+  deploy:
+    name: Deploy swarmsim-api
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+
+      - name: Ensure the scenario-run volume exists
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if flyctl volumes list -a "$FLY_APP" --json | jq -e --arg v "$FLY_VOLUME" '.[] | select((.Name // .name) == $v)' >/dev/null; then
+            echo "Volume $FLY_VOLUME already exists."
+          else
+            flyctl volumes create "$FLY_VOLUME" -a "$FLY_APP" --region "$FLY_REGION" --size 1 --yes
+          fi
+
+      # One machine: the run store is a volume, and a volume belongs to one machine.
+      - name: Deploy the image built above
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          AUTHORITY: ${{ vars.SWARM_AUTH_AUTHORITY }}
+          AUDIENCE: ${{ vars.SWARM_AUTH_AUDIENCE }}
+          ISSUER: ${{ vars.SWARM_AUTH_ISSUER }}
+        run: |
+          args=(--config "$FLY_CONFIG" --app "$FLY_APP" --image "$IMAGE" --ha=false --wait-timeout 300
+                --env "Auth__Authority=$AUTHORITY")
+          if [ -n "$AUDIENCE" ]; then args+=(--env "Auth__Audience=$AUDIENCE"); fi
+          if [ -n "$ISSUER" ]; then args+=(--env "Auth__Issuer=$ISSUER"); fi
+          flyctl deploy "${args[@]}"
+
+      # What the platform's health check cannot see: that the app is gated and durable.
+      - name: The deployed API runs Enforced and keeps runs on its volume
+        run: |
+          health=$(curl -fsS --retry 6 --retry-delay 10 --retry-all-errors "https://${FLY_APP}.fly.dev/health")
+          echo "$health"
+          echo "$health" | jq -e '.checks.auth.data.auth == "Enforced" and .checks.scenario_runs.data.scenarioRuns == "File"'
