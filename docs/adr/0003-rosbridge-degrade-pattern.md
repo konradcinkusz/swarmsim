@@ -54,3 +54,25 @@ here reports `"swarmBridge": "Connected" | "Simulated"` for the same reason.
   verification steps — recorded, not silently assumed away.
 
 Worked example: `backend/src/SwarmApi.Infrastructure/`, `backend/tests/SwarmApi.Api.Tests/`.
+
+## Amendment — 2026-09-22: the names in this record, and what it did not cover
+
+The decision above names types that were renamed before the code shipped:
+`ISwarmStateProvider` / `IMissionDispatcher` became one interface, `ISwarmBridge`
+(`backend/src/SwarmApi.Application/ISwarmBridge.cs`), and the two implementations are
+`RosBridgeSwarmBridge` and `SimulatedSwarmBridge` (`backend/src/SwarmApi.Infrastructure/`).
+`AdvanceTowardWaypoint` is `Trajectory.StepTowards` (`SwarmApi.Domain`). The decision itself
+is unchanged; only the vocabulary in the text above is stale, and it is left as written so
+the record shows what was decided at the time.
+
+Two gaps the decision did not address are recorded here rather than silently absorbed:
+
+- **Degradation is visible only at startup.** The bridge is chosen once; if the rosbridge
+  connection drops afterwards there is no reconnection, and `GET /health` keeps reporting
+  `Connected` while the swarm state silently goes stale. Tracked in
+  `docs/architecture/DEVIATIONS.md` (P8 row) until the bridge reconnects and reports its
+  live state.
+- **The compose stack raced this decision.** `api` used to start as soon as the `sim`
+  container existed, well before rosbridge listened, so the one-time probe almost always
+  chose Simulated. `docker/docker-compose.yml` now gates `api` on the `sim` healthcheck
+  (rosbridge accepting connections).

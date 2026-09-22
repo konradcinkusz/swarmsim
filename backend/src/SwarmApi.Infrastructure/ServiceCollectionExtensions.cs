@@ -95,6 +95,7 @@ public static class ServiceCollectionExtensions
             .AddJwtBearer(bearerOptions =>
             {
                 bearerOptions.MetadataAddress = $"{options.Authority.TrimEnd('/')}/.well-known/openid-configuration";
+                bearerOptions.RequireHttpsMetadata = options.RequireHttpsMetadata;
                 bearerOptions.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidIssuer = options.Issuer,
@@ -103,6 +104,14 @@ public static class ServiceCollectionExtensions
                 };
             });
         services.AddSingleton(new AuthStatus(AuthMode.Enforced));
+
+        if (!options.RequireHttpsMetadata)
+        {
+            logger.LogWarning(
+                "Auth:RequireHttpsMetadata is false: token signing keys for {Authority} are fetched without TLS. " +
+                "Acceptable only inside a private network such as the local compose `auth` profile.",
+                options.Authority);
+        }
 
         logger.LogInformation(
             "Auth:Authority set to {Authority}; running in Enforced mode.", options.Authority);

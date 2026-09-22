@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using SwarmApi.Application;
 using SwarmApi.Domain;
 using SwarmApi.Infrastructure;
@@ -10,22 +12,19 @@ namespace SwarmApi.Api.Tests;
 
 /// <summary>
 /// Exercises <see cref="ServiceCollectionExtensions.AddSwarmAuthentication"/> directly
-/// against a bare <see cref="ServiceCollection"/>, deliberately not through
-/// <c>WebApplicationFactory</c>: <c>Program.cs</c> reads <c>Auth:Authority</c>
-/// synchronously before <c>WebApplicationBuilder.Build()</c> runs, and
-/// <c>WebApplicationFactory</c>'s <c>ConfigureAppConfiguration</c> override is only
-/// merged in at <c>Build()</c> time — too late to affect that read. Testing the
-/// registration function directly is deterministic and needs no web host; the JWT
-/// bearer 401 behavior itself is framework-guaranteed, not bespoke logic. See
-/// docs/adr/0005-mcp-server-and-bearer-auth.md.
+/// against a bare <see cref="ServiceCollection"/>: which <see cref="AuthStatus"/> a given
+/// configuration registers, and how the JWT bearer options are shaped. What an
+/// unauthenticated caller can reach through the real host is covered separately by
+/// <see cref="EnforcedAuthEndpointTests"/>. See docs/adr/0005-mcp-server-and-bearer-auth.md.
 /// </summary>
 public class AuthenticationRegistrationTests
 {
-    private static IConfiguration BuildConfiguration(string? authority) =>
+    private static IConfiguration BuildConfiguration(string? authority, string? requireHttpsMetadata = null) =>
         new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Auth:Authority"] = authority,
+                ["Auth:RequireHttpsMetadata"] = requireHttpsMetadata,
             })
             .Build();
 
@@ -51,5 +50,24 @@ public class AuthenticationRegistrationTests
 
         var status = provider.GetRequiredService<AuthStatus>();
         Assert.Equal(AuthMode.Enforced, status.Mode);
+    }
+
+    [Fact]
+    public void Https_metadata_is_required_unless_explicitly_disabled()
+    {
+        var defaults = BearerOptions(BuildConfiguration("https://authservice.invalid"));
+        var disabled = BearerOptions(BuildConfiguration("http://authservice:8080", requireHttpsMetadata: "false"));
+
+        Assert.True(defaults.RequireHttpsMetadata);
+        Assert.False(disabled.RequireHttpsMetadata);
+        Assert.Equal("http://authservice:8080/.well-known/openid-configuration", disabled.MetadataAddress);
+    }
+
+    private static JwtBearerOptions BearerOptions(IConfiguration configuration)
+    {
+        var services = new ServiceCollection();
+        services.AddSwarmAuthentication(configuration, NullLogger.Instance);
+        using var provider = services.BuildServiceProvider();
+        return provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
     }
 }

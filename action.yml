@@ -13,9 +13,10 @@
 #     own. Bring up a SwarmApi.Api instance yourself first (see the root
 #     README's "Quickstart" — `dotnet run --project backend/src/SwarmApi.Api`,
 #     or `docker compose up` in `docker/`) and pass its base URL in.
-#   - No API keys / authentication exist yet for SwarmApi.Api, so none are
-#     wired in here either. Tracked separately in issue #21 — this action will
-#     need updating once that lands.
+#   - Authentication is optional, as it is in SwarmApi.Api itself: pass
+#     `api-token` (a bearer token from the authservice instance the API trusts)
+#     when the API runs in Enforced mode — docs/adr/0005-mcp-server-and-bearer-auth.md.
+#     Only the mission POST needs it; state reads stay open.
 #   - NOT real collision/violation detection. As of this writing, the
 #     SwarmApi.Domain model (backend/src/SwarmApi.Domain/) has no
 #     "violation"/"collision" concept at all — that will come from the
@@ -57,6 +58,12 @@ inputs:
       checkout layout; a caller that keeps its mission in a file can pass
       `$(cat path/to/mission.json)` as this input's value.
     required: true
+  api-token:
+    description: >-
+      Optional bearer token for POST /api/missions, needed only when SwarmApi.Api runs in
+      Enforced auth mode (Auth:Authority configured). Pass it from a secret, never inline.
+    required: false
+    default: ""
   poll-attempts:
     description: "How many times to poll GET /api/swarm/state after submitting the mission."
     required: false
@@ -80,6 +87,7 @@ runs:
       env:
         API_URL: ${{ inputs.api-url }}
         MISSION_JSON: ${{ inputs.mission-json }}
+        API_TOKEN: ${{ inputs.api-token }}
       run: |
         set -euo pipefail
 
@@ -100,12 +108,21 @@ runs:
           exit 1
         fi
 
+        # ${arr[@]+...} rather than "${arr[@]}": macOS runners ship bash 3.2, where an
+        # empty array under `set -u` is an unbound-variable error.
+        auth_header=()
+        if [ -n "$API_TOKEN" ]; then
+          echo "::add-mask::$API_TOKEN"
+          auth_header=(-H "Authorization: Bearer $API_TOKEN")
+        fi
+
         http_body="$(mktemp)"
         set +e
         http_code=$(curl -sS -o "$http_body" -w '%{http_code}' \
           --max-time 15 \
           -X POST "$api_url/api/missions" \
           -H 'Content-Type: application/json' \
+          ${auth_header[@]+"${auth_header[@]}"} \
           -d "$MISSION_JSON")
         curl_status=$?
         set -e
@@ -118,6 +135,11 @@ runs:
         echo "POST /api/missions -> HTTP $http_code"
         cat "$http_body"
         echo
+
+        if [ "$http_code" = "401" ]; then
+          echo "::error::POST /api/missions returned 401: the API runs in Enforced auth mode. Pass a bearer token through the 'api-token' input."
+          exit 1
+        fi
 
         if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
           echo "::error::POST /api/missions returned HTTP $http_code (expected 2xx). Response body printed above."
