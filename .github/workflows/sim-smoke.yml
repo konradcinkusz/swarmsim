@@ -116,10 +116,11 @@ jobs:
             echo "=== ${log#../sitl-logs/} (last 40 lines)"
             tail -n 40 "$log" | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g'
           done
-          # The ROS side: what each controller asked PX4 for, and what PX4 refused.
+          # The ROS side: what each controller asked PX4 for, and what PX4 refused. MAVROS
+          # relays every PX4 health event as an "FCU:" line; they would bury the rest.
           if [ -f ../sitl-logs/sim/coordination.log ]; then
-            echo "=== sim/coordination.log (last 150 lines)"
-            tail -n 150 ../sitl-logs/sim/coordination.log | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g'
+            echo "=== sim/coordination.log without MAVROS's FCU relays (last 200 lines)"
+            grep -v 'FCU: ' ../sitl-logs/sim/coordination.log | tail -n 200 | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g'
           fi
 
       - uses: actions/upload-artifact@v7
