@@ -60,7 +60,9 @@ reasoning; check there before assuming a gap is accidental.
   Do not assume a ROS binary exists either: `ros-humble-mavros` was missing from the
   Humble apt repository, which is why MAVROS is built from a pinned release tag.
   `docker/tests/test_entrypoint.sh` checks the entrypoint's decisions against stubs;
-  keep it passing and extend it with the entrypoint.
+  keep it passing and extend it with the entrypoint. A PX4 parameter every drone needs
+  goes in `simulation/px4-configs/px4-rc.params` (PX4's rcS sources it from PATH), not
+  in the image or an airframe copy.
 - Adding to `.gitignore`: name the files, not an extension. `*.env` once hid the
   committed drone configs in `simulation/px4-configs/`.
 - Any new external dependency (a second bridge transport, a cloud API) needs a working

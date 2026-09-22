@@ -10,6 +10,7 @@ says" and "what PX4 sees".
 |---|---|
 | `x500_common.env` | Shared defaults: the airframe (`PX4_SIM_MODEL`) and the Gazebo world (`PX4_GZ_WORLD`). Sourced first. |
 | `drone_<n>.env` | Per-instance values: `PX4_INSTANCE`, `ROS_NAMESPACE`, `PX4_GZ_MODEL_POSE`. Sourced after the common file, so it can override anything in it. |
+| `px4-rc.params` | PX4 parameters for every instance (`param set-default ...`). Not an env file: PX4's `init.d-posix/rcS` sources the first `px4-rc.params` on its PATH after the airframe, and the entrypoint puts this directory first. Today it sets one parameter, `EKF2_HGT_REF 0` (below). |
 
 How PX4 (v1.15, the version `docker/Dockerfile.sim` pins) consumes each variable:
 
@@ -20,6 +21,16 @@ How PX4 (v1.15, the version `docker/Dockerfile.sim` pins) consumes each variable
 | `PX4_INSTANCE` | `px4 -i` | Working directory `rootfs/<instance>`, `MAV_SYS_ID = instance + 1`, offboard MAVLink on UDP `14580+instance` → `14540+instance` |
 | `PX4_GZ_MODEL_POSE` | `gz_bridge -p` | Spawn pose `x,y,z,roll,pitch,yaw` in the world frame — and therefore the origin of that drone's local frame |
 | `ROS_NAMESPACE` | `docker/entrypoint.sh` | The tmux session name, and the namespace the ROS 2 side uses for this drone |
+
+### Why the barometer is the height reference
+
+PX4 v1.15 defaults `EKF2_HGT_REF` to GNSS. The local frame's zero height is then taken
+from the GNSS altitude when the first fix passes the estimator's checks, and in the SITL
+smoke, drones standing on their pads still read between -1.9 m and +2.6 m after four
+minutes. Every altitude in this repository — mission waypoints, the smoke test's
+checks, `frames.py`'s world ↔ local conversion — assumes a drone's local zero is its
+pad. With the barometer as the reference it is the height the drone booted at, which
+is its pad; GNSS height is still fused, with its offset estimated as a bias.
 
 There is no `MAV_SYS_ID` variable on purpose: PX4 derives it from the instance index, so a
 value here could only disagree with it.

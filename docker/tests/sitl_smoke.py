@@ -102,14 +102,20 @@ def run(api: str, drones: int) -> None:
     # A drone's first reports come before PX4's estimator has converged: the first SITL run
     # read drone_1 at z = 3.42 m while it sat on its pad. Wait for every drone to settle —
     # a frame that is not being converted never does, and times out with where they are.
+    # A height that never settles is the estimator's height reference, not a frame:
+    # simulation/px4-configs/px4-rc.params sets it to the barometer for that reason.
     def all_on_pads():
         current = state(api)
         settled = all(
             horizontal < 1.0 and vertical < 0.5
             for horizontal, vertical in (pad_error(i, d) for i, d in enumerate(by_id(current)))
         )
-        positions = {d["id"]: d["position"] for d in current["drones"]}
-        return settled, positions
+        seen = {
+            d["id"]: "({x:.2f}, {y:.2f}, {z:.2f})".format(**d["position"])
+            + f" {d.get('status')} armed={d.get('armed')} mode={d.get('flightMode')}"
+            for d in by_id(current)
+        }
+        return settled, seen
 
     try:
         _, settle_s = wait_for("every drone settled on its own pad", 240, all_on_pads, 2.0)

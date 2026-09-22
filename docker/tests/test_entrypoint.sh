@@ -21,7 +21,8 @@ make_sandbox() {
   local root="$1"
   mkdir -p "${root}/swarmsim/worlds" "${root}/swarmsim/px4-configs" \
     "${root}/px4/build/px4_sitl_default/bin" "${root}/bin" "${root}/logs"
-  cp "${REPO_ROOT}"/simulation/px4-configs/*.env "${root}/swarmsim/px4-configs/"
+  cp "${REPO_ROOT}"/simulation/px4-configs/*.env "${REPO_ROOT}"/simulation/px4-configs/px4-rc.params \
+    "${root}/swarmsim/px4-configs/"
   cp "${REPO_ROOT}"/simulation/worlds/*.sdf "${root}/swarmsim/worlds/"
   : > "${root}/ros_setup.bash"
   : > "${root}/coordination_setup.bash"
@@ -81,6 +82,8 @@ check "five drones spawn by default" test "$(spawn_count "${WORK}/all")" = 5
 check "drone_3 runs as instance 2 at y=6 in standalone mode" \
   grep -q 'new-session -d -s drone_3 .*PX4_GZ_STANDALONE=1 .*PX4_GZ_MODEL_POSE=0\\,6\\,0\\,0\\,0\\,0 .*px4 -i 2' \
   "${WORK}/all/calls.log"
+check "PX4 finds the swarm's px4-rc.params first on its PATH" \
+  grep -q 'new-session -d -s drone_1 .*env PATH=[^ ]*/swarmsim/px4-configs:' "${WORK}/all/calls.log"
 check "one Gazebo server on the configured world" \
   grep -q 'gz sim --verbose=1 -r -s .*/swarmsim_empty.sdf' "${WORK}/all/calls.log"
 refute "no GUI by default" grep -q 'gz sim -g' "${WORK}/all/calls.log"
@@ -114,6 +117,12 @@ rm "${WORK}"/empty/swarmsim/px4-configs/drone_*.env
 run_entrypoint "${WORK}/empty"
 check "missing drone configs are refused" grep -q 'no drone_\*.env found' "${WORK}/empty/out.log"
 check "missing drone configs exit non-zero" grep -q 'exit=1' "${WORK}/empty/out.log"
+
+make_sandbox "${WORK}/noparams"
+rm "${WORK}/noparams/swarmsim/px4-configs/px4-rc.params"
+run_entrypoint "${WORK}/noparams"
+check "a missing px4-rc.params is refused" grep -q 'px4-rc.params is missing' "${WORK}/noparams/out.log"
+refute "and no drone is spawned without it" grep -qs 'new-session -d -s drone_' "${WORK}/noparams/calls.log"
 
 make_sandbox "${WORK}/badheadless"
 run_entrypoint "${WORK}/badheadless" HEADLESS=maybe

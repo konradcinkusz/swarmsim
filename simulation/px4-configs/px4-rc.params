@@ -1,0 +1,16 @@
+#!/bin/sh
+# PX4 parameters for every swarm member. PX4's own init script applies them: after the
+# airframe, init.d-posix/rcS sources the first `px4-rc.params` on PATH ("user defined
+# params for instances can be in PATH"), and docker/entrypoint.sh puts this directory at
+# the front of every instance's PATH. `param set-default` is how PX4's airframes set
+# theirs, so a value someone sets by hand (QGroundControl, `param set`) still wins.
+# shellcheck disable=SC2154
+
+# Height reference: the barometer (0), not GNSS (1, PX4 v1.15's default). With GNSS as
+# the reference, the local frame's zero height is taken from the GNSS altitude when the
+# first fix passes its checks (EKF2 collect_gps), and in the SITL smoke drones standing
+# on their pads still read between -1.9 m and +2.6 m after four minutes. With the
+# barometer, zero is the height the drone booted at — its pad — which is what
+# PX4_GZ_MODEL_POSE, frames.py and every mission altitude assume. GNSS height is still
+# fused; the EKF estimates its offset as a bias instead of moving the origin with it.
+param set-default EKF2_HGT_REF 0
