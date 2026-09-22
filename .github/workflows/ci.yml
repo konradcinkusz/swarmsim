@@ -64,8 +64,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      # jsonschema is test-only: the contract tests validate against contracts/rosbridge/
+      # and skip without it, which CI must never do.
       - name: Install dependencies
-        run: pip install ruff pytest
+        run: pip install ruff pytest jsonschema
 
       - name: ruff check
         run: ruff check .

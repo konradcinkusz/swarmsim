@@ -1,16 +1,12 @@
-"""ROS 2 node: the swarm's single runtime mission entry point.
+"""ROS 2 node: the swarm's single runtime entry point for missions and commands.
 
-Subscribes to `/swarm/mission` (a JSON-encoded `std_msgs/String` — the same message
-`SwarmApi.Infrastructure.RosBridgeSwarmBridge` publishes over rosbridge on
-`POST /missions`), plans per-drone waypoint assignments with the pure
-`mission_planning.plan_swarm_waypoints`, and publishes each assigned drone's list to
-its own `<namespace>/mission/waypoints` topic, where `waypoint_follower_node` picks it
-up at runtime (see that node's `_on_mission_waypoints`).
-
-Expected `/swarm/mission` payload:
-
-    {"type": "waypoint"|"formation", "waypoints": [[x,y,z], ...],
-     "drone_count": N, "spacing_m": S}
+Subscribes to `/swarm/mission` and `/swarm/command` — JSON in a `std_msgs/String`, the
+payloads in contracts/rosbridge/ that `SwarmApi.Infrastructure.RosBridgeSwarmBridge`
+publishes over rosbridge. A mission is parsed and planned by the rclpy-free
+`mission_planning` module; each drone then gets its part on `/<drone>/mission/assignment`
+(a path) or `/<drone>/mission/slot` (a place behind the leader). A command goes to every
+drone on `/<drone>/mission/command`, whatever it is doing. The current mission and its
+drones are latched on `/swarm/active_mission` for the state aggregator.
 """
 
 from __future__ import annotations
@@ -18,56 +14,79 @@ from __future__ import annotations
 import json
 
 import rclpy
-from geometry_msgs.msg import Pose, PoseArray
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
-from ..mission_planning import plan_swarm_waypoints
-from ..trajectory import Vector3
+from ..mission_planning import parse_command_payload, parse_mission_payload, plan_mission
+
+LATCHED = QoSProfile(
+    depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE
+)
 
 
 class MissionDispatcherNode(Node):
     def __init__(self) -> None:
         super().__init__("mission_dispatcher_node")
+        self.declare_parameter("drones", ["drone_1"])
+        self._drones = [str(d) for d in self.get_parameter("drones").value]
 
-        self._publishers: dict[str, rclpy.publisher.Publisher] = {}
+        self._publishers: dict[str, object] = {}
+        self._active_pub = self.create_publisher(String, "/swarm/active_mission", LATCHED)
         self.create_subscription(String, "/swarm/mission", self._on_mission, 10)
-        self.get_logger().info("mission_dispatcher_node ready, listening on /swarm/mission")
+        self.create_subscription(String, "/swarm/command", self._on_command, 10)
+        self._publish_active(None, [])
+        self.get_logger().info(f"mission_dispatcher_node ready for {self._drones}")
 
-    def _publisher_for(self, drone_namespace: str):
-        if drone_namespace not in self._publishers:
-            self._publishers[drone_namespace] = self.create_publisher(
-                PoseArray, f"/{drone_namespace}/mission/waypoints", 10
-            )
-        return self._publishers[drone_namespace]
+    def _publisher(self, topic: str):
+        if topic not in self._publishers:
+            self._publishers[topic] = self.create_publisher(String, topic, 10)
+        return self._publishers[topic]
+
+    def _publish_active(self, mission_id: str | None, drones: list[str]) -> None:
+        payload = {"mission_id": mission_id, "drones": drones}
+        self._active_pub.publish(String(data=json.dumps(payload)))
 
     def _on_mission(self, msg: String) -> None:
         try:
-            payload = json.loads(msg.data)
-            base_waypoints = [Vector3(*wp) for wp in payload["waypoints"]]
-            plan = plan_swarm_waypoints(
-                mission_type=payload["type"],
-                base_waypoints=base_waypoints,
-                drone_count=int(payload["drone_count"]),
-                spacing_m=float(payload.get("spacing_m", 2.0)),
-            )
-        except (KeyError, ValueError, json.JSONDecodeError) as exc:
-            self.get_logger().error(f"rejected malformed /swarm/mission payload: {exc}")
+            plan = plan_mission(parse_mission_payload(msg.data))
+        except ValueError as exc:
+            self.get_logger().error(f"rejected /swarm/mission: {exc}")
             return
 
-        for drone_namespace, waypoints in plan.items():
-            out = PoseArray()
-            out.header.stamp = self.get_clock().now().to_msg()
-            out.header.frame_id = "map"
-            for wp in waypoints:
-                pose = Pose()
-                pose.position.x = wp.x
-                pose.position.y = wp.y
-                pose.position.z = wp.z
-                out.poses.append(pose)
-            self._publisher_for(drone_namespace).publish(out)
+        missing = [d for d in plan.drones if d not in self._drones]
+        if missing:
+            self.get_logger().error(
+                f"rejected mission {plan.mission_id}: it needs {missing}, "
+                f"but only {self._drones} are running"
+            )
+            return
 
-        self.get_logger().info(f"dispatched mission to {list(plan.keys())}")
+        for drone, path in plan.paths.items():
+            payload = {"mission_id": plan.mission_id, "waypoints": [[w.x, w.y, w.z] for w in path]}
+            self._publisher(f"/{drone}/mission/assignment").publish(String(data=json.dumps(payload)))
+        for drone, (leader, offset) in plan.followers.items():
+            payload = {
+                "mission_id": plan.mission_id,
+                "leader": leader,
+                "offset": [offset.x, offset.y, offset.z],
+            }
+            self._publisher(f"/{drone}/mission/slot").publish(String(data=json.dumps(payload)))
+
+        self._publish_active(plan.mission_id, plan.drones)
+        self.get_logger().info(f"dispatched mission {plan.mission_id} to {plan.drones}")
+
+    def _on_command(self, msg: String) -> None:
+        try:
+            command = parse_command_payload(msg.data)
+        except ValueError as exc:
+            self.get_logger().error(f"rejected /swarm/command: {exc}")
+            return
+
+        for drone in self._drones:
+            self._publisher(f"/{drone}/mission/command").publish(String(data=command.command))
+        self._publish_active(None, [])
+        self.get_logger().warning(f"swarm command '{command.command}' sent to {self._drones}")
 
 
 def main() -> None:
