@@ -18,6 +18,7 @@ public sealed class MissionPlanService(
     public async Task<MissionPlanView> CreatePlanAsync(
         CreateMissionRequest request, string? proposedBy, CancellationToken cancellationToken = default)
     {
+        using var activity = SwarmTelemetry.Source.StartActivity("plan.propose");
         MissionRequestValidator.Validate(request, limits);
         var now = time.GetUtcNow();
         var mission = MissionFactory.Create(request, now);
@@ -35,6 +36,9 @@ public sealed class MissionPlanService(
             Status = preview.Conflicts.Count > 0 ? MissionPlanStatus.Conflicted : MissionPlanStatus.PendingApproval,
         };
         _store.Add(plan);
+        activity?.SetTag("swarm.plan.id", plan.Id);
+        activity?.SetTag("swarm.plan.status", plan.Status.ToString());
+        SwarmTelemetry.PlanProposed(plan.Status);
         return MissionPlanView.From(plan);
     }
 
@@ -83,6 +87,7 @@ public sealed class MissionPlanService(
         plan.DecidedAtUtc = now;
         plan.DecidedBy = approvedBy;
         plan.ApprovalExpiresAtUtc = now.AddMinutes(options.ApprovalValidityMinutes);
+        SwarmTelemetry.PlanDecided("approved");
         return new PlanApproval(MissionPlanView.From(plan), code, plan.ApprovalExpiresAtUtc.Value);
     });
 
@@ -103,6 +108,7 @@ public sealed class MissionPlanService(
         plan.ApprovalCodeHash = null;
         plan.DecidedAtUtc = time.GetUtcNow();
         plan.DecidedBy = rejectedBy;
+        SwarmTelemetry.PlanDecided("rejected");
         return MissionPlanView.From(plan);
     });
 
@@ -114,7 +120,51 @@ public sealed class MissionPlanService(
     /// </summary>
     public async Task<Mission?> DispatchAsync(Guid planId, string? approvalCode, CancellationToken cancellationToken = default)
     {
-        var claimed = _store.Update<(MissionPlan Plan, byte[] Hash)?>(planId, plan =>
+        using var activity = SwarmTelemetry.Source.StartActivity("plan.dispatch");
+        activity?.SetTag("swarm.plan.id", planId);
+        (MissionPlan Plan, byte[] Hash)? claimed;
+        try
+        {
+            claimed = Claim(planId, approvalCode);
+        }
+        catch (ApprovalRefusedException)
+        {
+            SwarmTelemetry.DispatchRefused("code");
+            throw;
+        }
+        catch (PlanStateException)
+        {
+            SwarmTelemetry.DispatchRefused("state");
+            throw;
+        }
+
+        if (claimed is not { } claim)
+        {
+            return null;
+        }
+
+        try
+        {
+            var mission = await missions.DispatchAsync(MissionFactory.Launch(claim.Plan.Mission, time.GetUtcNow()), cancellationToken);
+            _store.Update(planId, plan =>
+            {
+                plan!.Status = MissionPlanStatus.Dispatched;
+                plan.MissionId = mission.Id;
+                return plan;
+            });
+            SwarmTelemetry.MissionDispatched(mission, "plan");
+            return mission;
+        }
+        catch (SwarmUnavailableException)
+        {
+            _store.Update(planId, plan => plan!.ApprovalCodeHash = claim.Hash);
+            throw;
+        }
+    }
+
+    /// <summary>Checks the plan and its code, and consumes the code — atomically, under the store's lock.</summary>
+    private (MissionPlan Plan, byte[] Hash)? Claim(Guid planId, string? approvalCode) =>
+        _store.Update<(MissionPlan Plan, byte[] Hash)?>(planId, plan =>
         {
             if (plan is null)
             {
@@ -141,29 +191,6 @@ public sealed class MissionPlanService(
             plan.ApprovalCodeHash = null;
             return (plan, consumed);
         });
-
-        if (claimed is not { } claim)
-        {
-            return null;
-        }
-
-        try
-        {
-            var mission = await missions.DispatchAsync(MissionFactory.Launch(claim.Plan.Mission, time.GetUtcNow()), cancellationToken);
-            _store.Update(planId, plan =>
-            {
-                plan!.Status = MissionPlanStatus.Dispatched;
-                plan.MissionId = mission.Id;
-                return plan;
-            });
-            return mission;
-        }
-        catch (SwarmUnavailableException)
-        {
-            _store.Update(planId, plan => plan!.ApprovalCodeHash = claim.Hash);
-            throw;
-        }
-    }
 
     private MissionPlan Expire(MissionPlan plan)
     {

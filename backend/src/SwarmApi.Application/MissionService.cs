@@ -21,19 +21,25 @@ public sealed class MissionService(ISwarmBridge bridge, MissionLimits limits, Ti
         CreateMissionRequest request, CancellationToken cancellationToken = default)
     {
         MissionRequestValidator.Validate(request, limits);
-        return await DispatchAsync(MissionFactory.Create(request, time.GetUtcNow()), cancellationToken);
+        var mission = await DispatchAsync(MissionFactory.Create(request, time.GetUtcNow()), cancellationToken);
+        SwarmTelemetry.MissionDispatched(mission, "direct");
+        return mission;
     }
 
     /// <summary>Sends an already validated mission to the swarm and records it as the active one.</summary>
     public async Task<Mission> DispatchAsync(Mission mission, CancellationToken cancellationToken = default)
     {
+        using var activity = SwarmTelemetry.Source.StartActivity("mission.dispatch");
+        activity?.SetTag("swarm.mission.id", mission.Id);
+        activity?.SetTag("swarm.mission.type", mission.Type.ToString());
+        activity?.SetTag("swarm.mission.drone_count", mission.DroneCount);
         await bridge.DispatchMissionAsync(mission, cancellationToken);
 
         // A new mission replaces whatever the swarm was flying: the previous one did not
         // complete, and saying so is more honest than leaving it Active forever.
         foreach (var previous in _log.Active())
         {
-            _log.TryEnd(previous.Id, MissionStatus.Aborted, time.GetUtcNow());
+            End(previous.Id, MissionStatus.Aborted);
         }
 
         _log.Add(mission);
@@ -45,7 +51,7 @@ public sealed class MissionService(ISwarmBridge bridge, MissionLimits limits, Ti
         var state = await bridge.GetStateAsync(cancellationToken);
         if (state is { ActiveMissionId: { } id, ActiveMissionComplete: true })
         {
-            _log.TryEnd(id, MissionStatus.Completed, time.GetUtcNow());
+            End(id, MissionStatus.Completed);
         }
 
         return state;
@@ -84,7 +90,7 @@ public sealed class MissionService(ISwarmBridge bridge, MissionLimits limits, Ti
         }
 
         await bridge.SendCommandAsync(command, missionId, cancellationToken);
-        _log.TryEnd(missionId, MissionStatus.Aborted, time.GetUtcNow());
+        End(missionId, MissionStatus.Aborted);
         return mission;
     }
 
@@ -94,7 +100,15 @@ public sealed class MissionService(ISwarmBridge bridge, MissionLimits limits, Ti
         await bridge.SendCommandAsync(SwarmCommand.Land, null, cancellationToken);
         foreach (var mission in _log.Active())
         {
-            _log.TryEnd(mission.Id, MissionStatus.Aborted, time.GetUtcNow());
+            End(mission.Id, MissionStatus.Aborted);
+        }
+    }
+
+    private void End(Guid missionId, MissionStatus outcome)
+    {
+        if (_log.TryEnd(missionId, outcome, time.GetUtcNow()))
+        {
+            SwarmTelemetry.MissionEnded(outcome);
         }
     }
 }

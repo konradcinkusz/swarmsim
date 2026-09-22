@@ -10,7 +10,7 @@ using Microsoft.Extensions.Hosting;
 namespace SwarmApi.ServiceDefaults;
 
 /// <summary>
-/// The shared kernel (P2): cross-cutting plumbing only (health checks, CORS). No
+/// The shared kernel (P2): cross-cutting plumbing only (health checks, CORS, telemetry). No
 /// entity, DTO, or business rule belongs here — see the constitution's P2 ceiling.
 /// A single-service repository still gets this now, ahead of needing a second
 /// service, because it is what makes the next service cheap to add correctly; see
@@ -20,10 +20,12 @@ public static class Extensions
 {
     public const string FrontendCorsPolicy = "Frontend";
 
-    public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder)
+    /// <param name="telemetrySources">The service's own <c>ActivitySource</c>/<c>Meter</c> names, exported with the rest (<see cref="Telemetry"/>).</param>
+    public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder, params string[] telemetrySources)
         where TBuilder : IHostApplicationBuilder
     {
         builder.Services.AddHealthChecks();
+        builder.AddTelemetry(telemetrySources);
 
         builder.Services.AddCors(options =>
         {
