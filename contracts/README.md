@@ -28,3 +28,15 @@ say which side has not caught up. A breaking change bumps `version` and the file
 
 Positions in `/swarm/state` are in the shared **world** frame (ENU, metres, Gazebo world
 origin) — never a drone's own local frame, whose origin is wherever that drone spawned.
+
+## `scenario/` — the scenario instrument ↔ its readers
+
+| File | What it is | Written by | Read by |
+|---|---|---|---|
+| [`scenario.v1.schema.json`](scenario/scenario.v1.schema.json) | A scenario file (`scenarios/*.yaml`): world, timeline, assertions | people | the runner (`scenarios/spec.py`) |
+| [`report.v1.schema.json`](scenario/report.v1.schema.json) | A suite report: every scenario's outcome, every seed's measured assertions, the mutation check | the runner (`runner.to_json`, `--json`, `--upload`) | `SwarmApi.Api`'s run store (`POST /api/scenario-runs`, docs/adr/0011) |
+
+[`scenario/examples/report.json`](scenario/examples/report.json) is a real report, not a
+hand-written one. `test_scenario_runner.py` fails when the runner no longer writes it (wall
+times aside), and `ScenarioRunServiceTests`/`ScenarioRunEndpointTests` ingest it — so a change
+to the report shows up on both sides. CLAUDE.md has the command that regenerates it.

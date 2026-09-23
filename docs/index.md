@@ -23,7 +23,7 @@ flowchart TB
 
     subgraph Api[".NET — SwarmApi"]
         Ep["Api: endpoints (transport only)"]
-        App["Application: MissionService · MissionPlanService<br/>validate · plan · approve · dispatch · abort · land"]
+        App["Application: MissionService · MissionPlanService · ScenarioRunService<br/>validate · plan · approve · dispatch · abort · land · store runs"]
         Dom["Domain: Mission, SwarmState, Trajectory, Formation"]
         Bridge["Infrastructure: ISwarmBridge<br/>RosBridgeSwarmBridge (real, reconnecting) /<br/>SimulatedSwarmBridge (no URL configured)"]
         Ep --> App --> Bridge
@@ -75,6 +75,8 @@ unreachable is reported as `Disconnected`, never replaced by the simulated one. 
   architectural choice, including the ones that depart from the standard on purpose.
 - **[API surface](architecture/API-SURFACE.md)** — every endpoint, classified as read,
   plan, approval, gated write, write or stop, with what it needs in Enforced mode.
+- **[Promotion test](PROMOTION.md)** — where this project stands, and the three
+  conditions that would make it a product rather than a lab.
 - **[Scenario study](research/scenario-study.md)** — what the scenario instrument found
   when it flew the swarm through wind, comms loss, battery faults and ten drones, and
   whether the scenarios would notice a regression.

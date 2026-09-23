@@ -1,0 +1,47 @@
+# swarmsim-api — SwarmApi.Api on Fly.io (P7; docs/adr/0007, docs/adr/0011). Deployed only by
+# .github/workflows/flyio.yml from a v* tag, never by hand. Paths are relative to this file.
+app = "swarmsim-api"
+primary_region = "fra"
+
+[build]
+  dockerfile = "../docker/Dockerfile.api"
+  context = "../backend"
+
+[env]                                   # non-secret configuration only (flyio/SECRETS.md)
+  ASPNETCORE_ENVIRONMENT = "Production"
+  ASPNETCORE_URLS = "http://+:8080"
+  # Anyone can reach this app, so it runs Enforced (docs/adr/0009): without an authority it
+  # refuses to start instead of coming up Open. Auth__Authority itself comes from the deploy
+  # (the SWARM_AUTH_AUTHORITY repository variable), because no authservice is deployed yet.
+  Auth__Required = "true"
+  # Scenario runs, one JSON file each, on the volume below (docs/adr/0011).
+  ScenarioRuns__Directory = "/data/scenario-runs"
+  # No RosBridge__Url on purpose: the hosted API keeps the run store and the simulated swarm
+  # (reported as "Simulated", P8). Flying real drones happens per tenant run (ADR-0012).
+
+[mounts]
+  source = "swarmsim_api_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"           # nobody calls this in-request: scale to zero
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+  [[http_service.checks]]
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"                # .NET cold start
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

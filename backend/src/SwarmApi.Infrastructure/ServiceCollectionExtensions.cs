@@ -80,6 +80,13 @@ public static class ServiceCollectionExtensions
 
         if (string.IsNullOrWhiteSpace(options.Authority))
         {
+            if (options.Required)
+            {
+                throw new InvalidOperationException(
+                    "Auth:Required is set but Auth:Authority is not. This deployment must run Enforced: " +
+                    "set Auth:Authority to an authservice instance (docs/adr/0011).");
+            }
+
             logger.LogInformation("Auth:Authority not configured; running in Open mode (no authentication).");
             services.AddAuthorization();
             services.AddAuthentication();
@@ -119,6 +126,31 @@ public static class ServiceCollectionExtensions
 
         logger.LogInformation(
             "Auth:Authority set to {Authority}; running in Enforced mode.", options.Authority);
+        return services;
+    }
+
+    /// <summary>
+    /// Where scenario runs are kept (docs/adr/0011): a directory of JSON files when
+    /// <c>ScenarioRuns:Directory</c> is set — and writable, or startup stops — else memory,
+    /// logged and reported by <c>/health</c> so nobody mistakes it for storage (P8).
+    /// </summary>
+    /// <exception cref="InvalidOperationException"><c>ScenarioRuns:Directory</c> is set but not writable.</exception>
+    public static IServiceCollection AddScenarioRunStore(
+        this IServiceCollection services, IConfiguration configuration, ILogger logger)
+    {
+        var options = configuration.GetSection(ScenarioRunOptions.SectionName).Get<ScenarioRunOptions>()
+            ?? new ScenarioRunOptions();
+        if (string.IsNullOrWhiteSpace(options.Directory))
+        {
+            logger.LogInformation(
+                "ScenarioRuns:Directory not configured; scenario runs are kept in memory and forgotten on restart.");
+            services.AddSingleton<IScenarioRunStore>(new InMemoryScenarioRunStore(options.MaxRuns));
+        }
+        else
+        {
+            services.AddSingleton<IScenarioRunStore>(new FileScenarioRunStore(options.Directory, options.MaxRuns, logger));
+        }
+
         return services;
     }
 }

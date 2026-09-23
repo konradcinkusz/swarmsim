@@ -19,14 +19,31 @@ namespace SwarmApi.Api.Tests;
 /// </summary>
 public class AuthenticationRegistrationTests
 {
-    private static IConfiguration BuildConfiguration(string? authority, string? requireHttpsMetadata = null) =>
+    private static IConfiguration BuildConfiguration(
+        string? authority, string? requireHttpsMetadata = null, string? required = null) =>
         new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Auth:Authority"] = authority,
                 ["Auth:RequireHttpsMetadata"] = requireHttpsMetadata,
+                ["Auth:Required"] = required,
             })
             .Build();
+
+    [Fact]
+    public void A_deployment_that_requires_auth_refuses_to_start_open()
+    {
+        var services = new ServiceCollection();
+
+        var refused = Assert.Throws<InvalidOperationException>(() =>
+            services.AddSwarmAuthentication(BuildConfiguration(null, required: "true"), NullLogger.Instance));
+        Assert.Contains("Auth:Required", refused.Message);
+
+        services.AddSwarmAuthentication(
+            BuildConfiguration("https://authservice.invalid", required: "true"), NullLogger.Instance);
+        using var provider = services.BuildServiceProvider();
+        Assert.Equal(AuthMode.Enforced, provider.GetRequiredService<AuthStatus>().Mode);
+    }
 
     [Fact]
     public void Open_mode_is_registered_when_authority_is_not_configured()

@@ -22,10 +22,17 @@ silently classifies every future write as a read).
 | POST | `/api/mission-plans/{id:guid}/approve` | approval | token | honoured |
 | POST | `/api/mission-plans/{id:guid}/reject` | approval | token | honoured |
 | POST | `/api/mission-plans/{id:guid}/dispatch` | gated-write | token | honoured |
+| POST | `/api/scenario-runs` | record | token | honoured |
+| GET | `/api/scenario-runs` | private-read | token | — |
+| GET | `/api/scenario-runs/{id:guid}` | private-read | token | — |
+| GET | `/api/scenario-runs/compare` | private-read | token | — |
 
 The classes:
 
 - **read** — changes nothing. Open in both auth modes (docs/adr/0005).
+- **private-read** — changes nothing, but returns someone's own data (their stored
+  scenario runs), so Enforced mode asks for a token (docs/adr/0011).
+- **record** — stores data; nothing flies (a scenario run's report).
 - **plan** — records a proposal and its preview; nothing flies.
 - **approval** — a person's decision on a plan. In Enforced mode the approver must not be
   the identity that proposed the plan.

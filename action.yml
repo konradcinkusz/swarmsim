@@ -4,8 +4,9 @@
 # Flies YAML scenarios (contracts/scenario/scenario.v1.schema.json) against a swarm in
 # a seeded kinematic simulation (L0) and fails the job when one fails. Everything runs
 # on the runner that calls it — the way a coverage tool runs your tests locally and only
-# reports: no service is called, nothing leaves the job. It writes a JUnit report and a
-# job summary.
+# reports: no service is called and nothing leaves the job unless you set `upload-url`,
+# which stores the report in a SwarmApi.Api to compare runs later (docs/adr/0011). It
+# writes a JUnit report and a job summary.
 #
 # The swarm under test is swarmsim's own reference swarm unless `sut` names another one:
 # MODULE:ATTRIBUTE importable from the workspace, implementing the protocol in
@@ -24,7 +25,7 @@ name: "SwarmSim Scenario Check"
 description: >-
   Runs swarm scenarios (YAML) against a system under test in a seeded kinematic
   simulation inside this job, and fails it when a scenario fails. Writes a JUnit report
-  and a job summary; calls no external service.
+  and a job summary; calls no external service unless upload-url is set.
 author: "swarmsim"
 branding:
   icon: "check-circle"
@@ -68,6 +69,21 @@ inputs:
     description: "Python the runner runs on."
     required: false
     default: "3.11"
+  upload-url:
+    description: >-
+      Optional. A SwarmApi.Api base URL: the report is also stored there
+      (POST /api/scenario-runs), to list and compare runs. A failed upload is a warning,
+      never a failed check. Empty: nothing leaves the job.
+    required: false
+    default: ""
+  upload-token:
+    description: "Bearer token for upload-url, when that API runs Enforced. Pass it from a secret."
+    required: false
+    default: ""
+  upload-label:
+    description: "What was tested, stored with the run. Empty: the commit and the branch."
+    required: false
+    default: ""
 
 outputs:
   passed:
@@ -100,6 +116,9 @@ runs:
         MUTATION: ${{ inputs.mutation-check }}
         JUNIT: ${{ inputs.junit-path }}
         SUMMARY: ${{ inputs.job-summary }}
+        UPLOAD_URL: ${{ inputs.upload-url }}
+        UPLOAD_LABEL: ${{ inputs.upload-label }}
+        SWARMSIM_API_TOKEN: ${{ inputs.upload-token }}
       run: |
         set -euo pipefail
         read -r -a paths <<< "$SCENARIOS"
@@ -107,6 +126,8 @@ runs:
         if [ "$SUMMARY" = "true" ]; then args+=(--markdown "$GITHUB_STEP_SUMMARY"); fi
         if [ -n "$SUT" ]; then args+=(--sut "$SUT"); fi
         if [ "$MUTATION" = "true" ]; then args+=(--mutants); fi
+        if [ -n "$UPLOAD_URL" ]; then args+=(--upload "$UPLOAD_URL"); fi
+        if [ -n "$UPLOAD_LABEL" ]; then args+=(--label "$UPLOAD_LABEL"); fi
 
         echo "junit-path=$JUNIT" >> "$GITHUB_OUTPUT"
         set +e

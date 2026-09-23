@@ -50,6 +50,7 @@ nav:
       - Overview: architecture/README.md
       - Open deviations: architecture/DEVIATIONS.md
       - API surface: architecture/API-SURFACE.md
+      - Promotion test: PROMOTION.md
   - Decision records:
       - "0001 · Simulation stack selection": adr/0001-simulation-stack-selection.md
       - "0002 · Composition root split": adr/0002-composition-root-split.md
@@ -60,6 +61,10 @@ nav:
       - "0007 · Deployment target": adr/0007-deployment-target.md
       - "0008 · Scenario instrument": adr/0008-scenario-instrument.md
       - "0009 · Agent write gate": adr/0009-agent-write-gate.md
+      - "0010 · OpenTelemetry": adr/0010-opentelemetry.md
+      - "0011 · Hosted API and run store": adr/0011-hosted-api-and-run-store.md
+      - "0012 · Tenant run orchestrator": adr/0012-tenant-run-orchestrator.md
+      - "0013 · ROS 2 Jazzy migration": adr/0013-ros2-jazzy-migration.md
   - Research:
       - "Scenario study": research/scenario-study.md
 

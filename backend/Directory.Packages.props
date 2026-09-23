@@ -3,14 +3,17 @@
     <CentralPackageVersionOverrideEnabled>false</CentralPackageVersionOverrideEnabled>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Test-only dependencies, plus one recorded runtime exception. Runtime code
+    <!-- Test-only dependencies, plus two recorded runtime exceptions. Runtime code
          (SwarmApi.Domain/Application/Infrastructure/ServiceDefaults/Api) otherwise ships
          zero third-party NuGet packages by design — everything else it needs (minimal
-         APIs, System.Net.WebSockets, health checks) ships in the ASP.NET Core shared
-         framework. Per REPO-BASELINE.md §4b's dependency budget: this table is the whole
-         budget. JWT bearer validation is the one addition that does not ship in-box —
-         see docs/adr/0005-mcp-server-and-bearer-auth.md for why it was added rather than
-         hand-rolled. -->
+         APIs, System.Net.WebSockets, health checks, ActivitySource and Meter) ships in
+         the ASP.NET Core shared framework. Per REPO-BASELINE.md §4b's dependency budget:
+         this table is the whole budget.
+         - JWT bearer validation does not ship in-box: docs/adr/0005 says why it was added
+           rather than hand-rolled.
+         - OpenTelemetry (the SDK, its OTLP exporter, ASP.NET Core and runtime
+           instrumentation) is how P15's OTLP export is done at all; only
+           SwarmApi.ServiceDefaults references it — docs/adr/0010. -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />
@@ -18,5 +21,9 @@
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="8.0.31" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.22" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.19.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.19.0" />
   </ItemGroup>
 </Project>

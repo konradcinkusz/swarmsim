@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "sut": "reference",
+  "seeds": [
+    1,
+    2
+  ],
+  "ok": false,
+  "counts": {
+    "passed": 1,
+    "failed": 0,
+    "xfail": 1,
+    "xpass": 0
+  },
+  "errors": [],
+  "scenarios": [
+    {
+      "name": "waypoint_lanes",
+      "source": "scenarios/waypoint_lanes.yaml",
+      "description": "Three drones fly parallel lanes 20 m out, one lane per drone, and land at the end of each. The baseline every other scenario perturbs: calm air, perfect GPS, full batteries.",
+      "expect": "pass",
+      "expect_reason": null,
+      "outcome": "passed",
+      "killed_mutants": [
+        "never_lands",
+        "no_frame_conversion"
+      ],
+      "runs": [
+        {
+          "seed": 1,
+          "passed": true,
+          "wall_time_s": 0.0298,
+          "assertions": [
+            {
+              "assertion": "mission_completes",
+              "passed": true,
+              "measured": 24.8,
+              "unit": "s",
+              "violations": []
+            },
+            {
+              "assertion": "all_landed",
+              "passed": true,
+              "measured": 25.6,
+              "unit": "s",
+              "violations": []
+            },
+            {
+              "assertion": "min_separation",
+              "passed": true,
+              "measured": 3.0,
+              "unit": "m",
+              "violations": []
+            },
+            {
+              "assertion": "final_position",
+              "passed": true,
+              "measured": 0.459,
+              "unit": "m",
+              "violations": []
+            },
+            {
+              "assertion": "final_position",
+              "passed": true,
+              "measured": 0.459,
+              "unit": "m",
+              "violations": []
+            },
+            {
+              "assertion": "final_position",
+              "passed": true,
+              "measured": 0.459,
+              "unit": "m",
+              "violations": []
+            }
+          ]
+        },
+        {
+          "seed": 2,
+          "passed": true,
+          "wall_time_s": 0.025,
+          "assertions": [
+            {
+              "assertion": "mission_completes",
+              "passed": true,
+              "measured": 24.8,
+              "unit": "s",
+              "violations": []
+            },
+            {
+              "assertion": "all_landed",
+              "passed": true,
+              "measured": 25.6,
+              "unit": "s",
+              "violations": []
+            },
+            {
+              "assertion": "min_separation",
+              "passed": true,
+              "measured": 3.0,
+              "unit": "m",
+              "violations": []
+            },
+            {
+              "assertion": "final_position",
+              "passed": true,
+              "measured": 0.459,
+              "unit": "m",
+              "violations": []
+            },
+            {
+              "assertion": "final_position",
+              "passed": true,
+              "measured": 0.459,
+              "unit": "m",
+              "violations": []
+            },
+            {
+              "assertion": "final_position",
+              "passed": true,
+              "measured": 0.459,
+              "unit": "m",
+              "violations": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "v_formation_from_pads",
+      "source": "scenarios/v_formation_from_pads.yaml",
+      "description": "A three-drone V formation launched from the pads. The V puts drone_3 on the far side of the leader, but every pad is on the near side: the straight line to drone_3's slot runs through drone_2, which is on its way to its own slot, just after takeoff.",
+      "expect": "fail",
+      "expect_reason": "The reference swarm assigns formation slots without looking at where the drones start and has no deconfliction in flight, so a V launched from a row of pads makes a follower cross its neighbours. Fixing it means choosing the leader and each follower's side from the pad layout, or deconflicting the plan before it is dispatched.\n",
+      "outcome": "xfail",
+      "killed_mutants": null,
+      "runs": [
+        {
+          "seed": 1,
+          "passed": false,
+          "wall_time_s": 0.0266,
+          "assertions": [
+            {
+              "assertion": "min_separation",
+              "passed": false,
+              "measured": 0.482,
+              "unit": "m",
+              "violations": [
+                {
+                  "drones": [
+                    "drone_2",
+                    "drone_3"
+                  ],
+                  "t_s": 4.0,
+                  "measured": 0.482,
+                  "threshold": 2.0,
+                  "description": "drone_2 and drone_3 came within 0.48 m of each other at t=4.0 s (minimum 2 m)"
+                }
+              ]
+            },
+            {
+              "assertion": "mission_completes",
+              "passed": true,
+              "measured": 31.8,
+              "unit": "s",
+              "violations": []
+            }
+          ]
+        },
+        {
+          "seed": 2,
+          "passed": false,
+          "wall_time_s": 0.0264,
+          "assertions": [
+            {
+              "assertion": "min_separation",
+              "passed": false,
+              "measured": 0.482,
+              "unit": "m",
+              "violations": [
+                {
+                  "drones": [
+                    "drone_2",
+                    "drone_3"
+                  ],
+                  "t_s": 4.0,
+                  "measured": 0.482,
+                  "threshold": 2.0,
+                  "description": "drone_2 and drone_3 came within 0.48 m of each other at t=4.0 s (minimum 2 m)"
+                }
+              ]
+            },
+            {
+              "assertion": "mission_completes",
+              "passed": true,
+              "measured": 31.8,
+              "unit": "s",
+              "violations": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "mutation": {
+    "mutants": [
+      {
+        "name": "never_lands",
+        "breaks": "a drone that finished its task hovers instead of handing over to AUTO.LAND"
+      },
+      {
+        "name": "formation_offset_dropped",
+        "breaks": "followers are sent to the leader's own position instead of their slots"
+      },
+      {
+        "name": "no_frame_conversion",
+        "breaks": "each drone treats its local frame (origin: its own pad) as the world frame"
+      },
+      {
+        "name": "deaf_to_commands",
+        "breaks": "drones ignore operator commands (land, rtl, hold)"
+      },
+      {
+        "name": "no_battery_reallocation",
+        "breaks": "a drone low on battery keeps its task; nobody takes over"
+      },
+      {
+        "name": "battery_blind",
+        "breaks": "battery levels are ignored everywhere: when planning and in flight"
+      },
+      {
+        "name": "no_comms_timeout",
+        "breaks": "a follower that lost its leader holds its slot forever instead of going home"
+      },
+      {
+        "name": "hair_trigger_comms_timeout",
+        "breaks": "a follower goes home after 0.3 s without its leader, not 5 s"
+      }
+    ],
+    "survivors": [
+      "formation_offset_dropped",
+      "deaf_to_commands",
+      "no_battery_reallocation",
+      "battery_blind",
+      "no_comms_timeout",
+      "hair_trigger_comms_timeout"
+    ],
+    "toothless_scenarios": []
+  }
+}

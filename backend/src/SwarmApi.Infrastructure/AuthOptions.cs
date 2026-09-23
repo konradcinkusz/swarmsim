@@ -25,4 +25,13 @@ public sealed class AuthOptions
     /// metadata address on the first gated request and the API answers 500.
     /// </summary>
     public bool RequireHttpsMetadata { get; set; } = true;
+
+    /// <summary>
+    /// Whether this deployment may run at all without an authority (default: false). A
+    /// deployment anyone else can reach sets it (the Fly config does): there, Open mode
+    /// would let any caller approve and dispatch a mission plan, so a missing
+    /// <see cref="Authority"/> stops startup instead of degrading to Open
+    /// (docs/adr/0009, docs/adr/0011).
+    /// </summary>
+    public bool Required { get; set; }
 }

@@ -67,15 +67,17 @@ public class ApiSurfaceTests(WebApplicationFactory<Program> factory) : IClassFix
         {
             var honoured = served[$"{row.Method} {row.Route}"].Metadata.GetMetadata<IdempotentWriteMetadata>() is not null;
             Assert.True(honoured == (row.Idempotency == "honoured"), $"{row.Method} {row.Route}: Idempotency-Key {row.Idempotency}");
-            Assert.True(row.Class == "read" || honoured, $"{row.Method} {row.Route} is a {row.Class} and must honour Idempotency-Key");
+            var reads = row.Class is "read" or "private-read";
+            Assert.True(reads || honoured, $"{row.Method} {row.Route} is a {row.Class} and must honour Idempotency-Key");
             Assert.True(row.Class != "read" || row.Enforced == "open", $"{row.Method} {row.Route}: reads stay open");
+            Assert.True(row.Class != "private-read" || row.Enforced == "token", $"{row.Method} {row.Route}: private data needs a token");
         }
     }
 
     [Fact]
     public void The_table_only_uses_the_classes_it_defines()
     {
-        string[] classes = ["read", "plan", "approval", "gated-write", "write", "safety-write"];
+        string[] classes = ["read", "private-read", "record", "plan", "approval", "gated-write", "write", "safety-write"];
 
         Assert.All(Table(), row => Assert.Contains(row.Class, classes));
         Assert.Single(Table(), row => row.Class == "gated-write");

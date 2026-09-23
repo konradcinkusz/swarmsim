@@ -2,13 +2,15 @@
 
     run       [PATH ...] [--seed N] [--seeds K] [--sut MODULE:ATTR] [--mutants]
               [--junit FILE] [--json FILE] [--markdown FILE] [--traces DIR]
+              [--upload API_URL [--label TEXT]]   (token: $SWARMSIM_API_TOKEN)
     validate  [PATH ...]       check scenario files against the schema, run nothing
     mutants                    list the broken swarms the mutation check uses
 
 PATH is a scenario file or a directory searched for *.yaml (default: ./scenarios).
 Exit status: 0 when every scenario met its expectation (and, with --mutants, every
 scenario failed at least one mutant and every mutant was failed by one), 1 when not,
-2 when the scenarios or the arguments could not be used.
+2 when the scenarios or the arguments could not be used. A failed --upload is reported
+and never changes it: the verdict is made here, storing it is only remembering it.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -23,6 +26,7 @@ from .mutants import MUTANTS
 from .runner import run_suite, to_json, to_junit, to_markdown
 from .spec import ScenarioError, discover, load_scenario
 from .sut import ReferenceSwarm
+from .upload import TOKEN_VARIABLE, UploadError, upload_report
 
 
 def _load_sut(reference: str | None):
@@ -65,6 +69,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--json", help="write a JSON report here")
     run.add_argument("--markdown", help="write a Markdown summary here (appends)")
     run.add_argument("--traces", help="write the trace of every failing run into this directory")
+    run.add_argument(
+        "--upload", metavar="API_URL", help="also store the report in SwarmApi.Api at this URL"
+    )
+    run.add_argument("--label", help="what was tested, for --upload (default: the commit, in CI)")
 
     validate = commands.add_parser("validate", help="check scenario files, run nothing")
     validate.add_argument("paths", nargs="*", default=["scenarios"])
@@ -121,9 +129,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.markdown:
         with open(args.markdown, "a", encoding="utf-8") as summary:
             summary.write(markdown)
+    if args.upload:
+        _upload(args.upload, to_json(report), args.label or _default_label())
     if report.errors and not report.scenarios:
         return 2
     return 0 if report.ok else 1
+
+
+def _default_label() -> str | None:
+    """In GitHub Actions, the commit and branch; elsewhere nothing."""
+    sha = os.environ.get("GITHUB_SHA", "")[:12]
+    ref = os.environ.get("GITHUB_REF_NAME", "")
+    return " ".join(part for part in (sha, ref) if part) or None
+
+
+def _upload(api: str, report: dict, label: str | None) -> None:
+    try:
+        stored = upload_report(api, report, label, os.environ.get(TOKEN_VARIABLE) or None)
+    except UploadError as exc:
+        prefix = "::warning::" if os.environ.get("GITHUB_ACTIONS") == "true" else "warning: "
+        print(f"{prefix}the report was not stored: {exc}", file=sys.stderr)
+        return
+    print(f"stored as scenario run {stored.get('id')} at {api.rstrip('/')}/api/scenario-runs")
 
 
 if __name__ == "__main__":
