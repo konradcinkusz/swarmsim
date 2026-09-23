@@ -28,8 +28,19 @@ for ((i = 0; i < count; i++)); do
   for topic in vehicle_status offboard_control_mode vehicle_command_ack \
     vehicle_local_position vehicle_local_position_groundtruth home_position \
     estimator_status estimator_status_flags vehicle_gps_position vehicle_air_data \
-    vehicle_land_detected; do
+    vehicle_land_detected failsafe_flags; do
     echo "--- ${topic}"
     timeout 10 "${bin}/px4-listener" --instance "${i}" "${topic}" -n 1 2>&1 || true
   done
+  # The simulated GNSS, compass and battery are PX4 modules fed from gz_bridge's ground
+  # truth. One run lost all three on one drone at arming while its IMU and barometer kept
+  # coming: whether the ground truth stopped (Gazebo) or the modules did (PX4's work
+  # queue) shows in the timestamps below and in each module's cycle count.
+  for topic in sensor_gps sensor_mag battery_status vehicle_attitude_groundtruth \
+    vehicle_global_position_groundtruth; do
+    echo "--- ${topic}"
+    timeout 10 "${bin}/px4-listener" --instance "${i}" "${topic}" -n 1 2>&1 | head -n 4 || true
+  done
+  echo "--- perf (simulation modules)"
+  timeout 10 "${bin}/px4-perf" --instance "${i}" 2>&1 | grep -E "_sim|battery|gz_bridge" || true
 done

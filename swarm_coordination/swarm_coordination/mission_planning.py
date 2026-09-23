@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from .formation import line_formation, v_formation
@@ -115,23 +116,28 @@ def plan_swarm_waypoints(
     base_waypoints: list[Vector3],
     drone_count: int,
     spacing_m: float,
+    drones: Sequence[str] | None = None,
 ) -> dict[str, list[Vector3]]:
     """Which drones get an explicit waypoint list for this mission, and what it is.
+
+    ``drones`` are the drones to plan onto, in order (default: ``drone_1`` …
+    ``drone_<drone_count>``); the first is the leader of a formation.
 
     'waypoint': every drone gets `base_waypoints` shifted onto its own parallel lane
     (y + i * spacing), so the swarm moves as a group without converging onto one line.
 
-    'formation': only the leader (`drone_1`) gets `base_waypoints`, verbatim. Followers
-    get no waypoint list at all — they hold a slot relative to the leader instead (see
+    'formation': only the leader gets `base_waypoints`, verbatim. Followers get no
+    waypoint list at all — they hold a slot relative to the leader instead (see
     :func:`plan_mission`).
     """
     if drone_count < 1:
         raise ValueError("drone_count must be >= 1")
     if not base_waypoints:
         raise ValueError("base_waypoints must not be empty")
+    names = _drone_names(drone_count, drones)
 
     if mission_type == "formation":
-        return {"drone_1": list(base_waypoints)}
+        return {names[0]: list(base_waypoints)}
 
     if mission_type != "waypoint":
         raise ValueError(
@@ -139,21 +145,34 @@ def plan_swarm_waypoints(
         )
 
     return {
-        f"drone_{i + 1}": [wp + Vector3(0.0, i * spacing_m, 0.0) for wp in base_waypoints]
+        names[i]: [wp + Vector3(0.0, i * spacing_m, 0.0) for wp in base_waypoints]
         for i in range(drone_count)
     }
 
 
-def plan_mission(mission: MissionMessage) -> MissionPlan:
-    """Every drone's part in ``mission``: a path, or a slot behind the leader."""
+def plan_mission(mission: MissionMessage, drones: Sequence[str] | None = None) -> MissionPlan:
+    """Every drone's part in ``mission``: a path, or a slot behind the leader.
+
+    ``drones`` are the drones to plan onto, in order — the supervisor passes the ones fit
+    to fly (see supervisor.py); default ``drone_1`` … ``drone_<drone_count>``.
+    """
+    names = _drone_names(mission.drone_count, drones)
     plan = MissionPlan(
         mission_id=mission.mission_id,
         paths=plan_swarm_waypoints(
-            mission.mission_type, mission.waypoints, mission.drone_count, mission.spacing_m
+            mission.mission_type, mission.waypoints, mission.drone_count, mission.spacing_m, names
         ),
     )
     if mission.mission_type == "formation":
         offsets = FORMATIONS[mission.formation](mission.drone_count - 1, mission.spacing_m)
-        for i, offset in enumerate(offsets):
-            plan.followers[f"drone_{i + 2}"] = ("drone_1", offset)
+        for follower, offset in zip(names[1:], offsets, strict=True):
+            plan.followers[follower] = (names[0], offset)
     return plan
+
+
+def _drone_names(drone_count: int, drones: Sequence[str] | None) -> list[str]:
+    if drones is None:
+        return [f"drone_{i + 1}" for i in range(drone_count)]
+    if len(drones) < drone_count:
+        raise ValueError(f"{drone_count} drone(s) needed, {len(drones)} given")
+    return list(drones[:drone_count])

@@ -1,0 +1,21 @@
+version: 1
+name: waypoint_lanes
+description: >
+  Three drones fly parallel lanes 20 m out, one lane per drone, and land at the end of
+  each. The baseline every other scenario perturbs: calm air, perfect GPS, full batteries.
+drones: 3
+duration_s: 60
+events:
+  - at_s: 1
+    mission:
+      type: waypoint
+      waypoints: [[0, 0, 5], [20, 0, 5]]
+      drone_count: 3
+      spacing_m: 3
+assertions:
+  - mission_completes: {within_s: 45}
+  - all_landed: {by_s: 60}
+  - min_separation: {min_m: 2.0}
+  - final_position: {drone: drone_1, position: [20, 0, 0], tolerance_m: 0.75}
+  - final_position: {drone: drone_2, position: [20, 3, 0], tolerance_m: 0.75}
+  - final_position: {drone: drone_3, position: [20, 6, 0], tolerance_m: 0.75}

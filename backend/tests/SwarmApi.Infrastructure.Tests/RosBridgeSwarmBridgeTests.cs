@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using SwarmApi.Application.Contracts;
 using SwarmApi.Domain;
@@ -127,13 +128,18 @@ public sealed class RosBridgeSwarmBridgeTests : IAsyncLifetime
     {
         StartBridge();
         await Eventually(() => _bridge.Mode == SwarmBridgeMode.Connected, "connected");
-        var before = _server.Received.Count;
 
         await Task.WhenAll(Enumerable.Range(0, 25).Select(_ => _bridge.DispatchMissionAsync(AMission())));
 
-        await Eventually(() => _server.Received.Count >= before + 25, "25 missions received");
-        var published = _server.Received.Skip(before).ToList();
-        Assert.All(published, m => Assert.Contains("\"topic\":\"/swarm/mission\"", m));
+        // Publishes are counted, not frames: the bridge sends its advertise and subscribe
+        // frames before it reads as Connected, but the server can record them after this
+        // test has, and counting frames from that moment on failed 3 runs in 40.
+        await Eventually(() => Publishes().Count >= 25, "25 missions received");
+        Assert.Equal(25, Publishes().Count);
+        Assert.All(Publishes(), m => Assert.Contains("\"topic\":\"/swarm/mission\"", m));
+        Assert.All(_server.Received, frame => JsonDocument.Parse(frame).Dispose());
+
+        List<string> Publishes() => _server.Received.Where(m => m.Contains("\"op\":\"publish\"")).ToList();
     }
 
     [Fact]

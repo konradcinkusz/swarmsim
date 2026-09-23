@@ -48,6 +48,12 @@ The two sides meet at one contract: `contracts/rosbridge/` holds a JSON Schema a
 example for each rosbridge message (`/swarm/mission`, `/swarm/command`, `/swarm/state`),
 and both test suites are held to the same files (P11).
 
+The scenario instrument ([ADR-0008](../adr/0008-scenario-instrument.md)) sits beside
+them: YAML scenarios (`contracts/scenario/`) flown in a seeded kinematic simulation
+against the swarm's own modules, through the same rosbridge contract, with a mutation
+check that proves each scenario would notice a regression. It runs on every push and,
+as the root `action.yml`, inside anyone's CI.
+
 ## Compliance checklist
 
 The constitution's §3 checklist, item by item, for `SwarmApi.Api` (the one service this
@@ -79,7 +85,7 @@ Last worked through: 2026-09-22.
 | 16 | Extension points are interfaces registered in DI, not base classes | Yes | `ISwarmBridge` (two implementations, no base class) |
 | 17 | Has a test project; the logic-bearing layer is covered | Yes | `SwarmApi.Domain.Tests`, `SwarmApi.Application.Tests` (mission lifecycle), `SwarmApi.Infrastructure.Tests` (the rosbridge protocol against `contracts/rosbridge/`, the bridge against an in-process rosbridge), `SwarmApi.Api.Tests` (host-level, including Enforced auth) |
 | 18 | Built by the tag-driven workflow with path-based change detection | Deviation | P12 row |
-| 19 | Architectural decisions recorded in `docs/` | Yes | Seven ADRs in [`docs/adr/`](https://github.com/konradcinkusz/swarmsim/tree/main/docs/adr), amended in place (dated) when the code moves on |
+| 19 | Architectural decisions recorded in `docs/` | Yes | Eight ADRs in [`docs/adr/`](https://github.com/konradcinkusz/swarmsim/tree/main/docs/adr), amended in place (dated) when the code moves on |
 
 The repository baseline (architecture-standards `REPO-BASELINE.md`) is met for CODEOWNERS,
 grouped dependency updates, `.editorconfig`, central package management, PR/issue

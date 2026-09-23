@@ -1,0 +1,23 @@
+version: 1
+name: plan_around_low_battery
+description: >
+  drone_1 is already at 15% when a three-drone mission arrives. The mission must be
+  flown by drone_2, drone_3 and drone_4 — lanes assigned in id order to the drones fit
+  to fly — and drone_1 must never leave its pad.
+drones: 4
+duration_s: 60
+events:
+  - at_s: 0
+    battery: {drone: drone_1, set_pct: 15}
+  - at_s: 1
+    mission:
+      type: waypoint
+      waypoints: [[0, 0, 5], [20, 0, 5]]
+      drone_count: 3
+      spacing_m: 3
+assertions:
+  - never_mode: {drone: drone_1, mode: OFFBOARD}
+  - final_position: {drone: drone_2, position: [20, 0, 0], tolerance_m: 0.75}
+  - final_position: {drone: drone_4, position: [20, 6, 0], tolerance_m: 0.75}
+  - mission_completes: {within_s: 50}
+  - min_separation: {min_m: 1.5}

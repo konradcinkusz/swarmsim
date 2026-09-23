@@ -100,6 +100,8 @@ internal sealed class FakeRosBridge : IAsyncDisposable
         {
             try
             {
+                // One entry per message, as rosbridge reads them: a frame can arrive in parts.
+                using var message = new MemoryStream();
                 while (socket.State == WebSocketState.Open)
                 {
                     var result = await socket.ReceiveAsync(buffer, CancellationToken.None);
@@ -108,7 +110,12 @@ internal sealed class FakeRosBridge : IAsyncDisposable
                         return;
                     }
 
-                    _received.Enqueue(Encoding.UTF8.GetString(buffer, 0, result.Count));
+                    message.Write(buffer, 0, result.Count);
+                    if (result.EndOfMessage)
+                    {
+                        _received.Enqueue(Encoding.UTF8.GetString(message.ToArray()));
+                        message.SetLength(0);
+                    }
                 }
             }
             catch (Exception ex) when (ex is WebSocketException or OperationCanceledException or ObjectDisposedException)

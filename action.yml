@@ -1,238 +1,123 @@
 # =============================================================================
-# swarmsim: mission-smoke-test — PRE-AUTH, PRE-HOSTED PROTOTYPE (issue #19)
+# swarmsim: scenario check — swarm scenarios as a CI check, run inside your job
 # =============================================================================
-# What this is:
-#   A proof-of-concept composite Action that proves the CI-check *wiring* for a
-#   swarmsim mission: it POSTs a mission definition to a running SwarmApi.Api
-#   instance, then polls its swarm state a few times to make sure the round
-#   trip works and nothing has gone visibly wrong.
+# Flies YAML scenarios (contracts/scenario/scenario.v1.schema.json) against a swarm in
+# a seeded kinematic simulation (L0) and fails the job when one fails. Everything runs
+# on the runner that calls it — the way a coverage tool runs your tests locally and only
+# reports: no service is called, nothing leaves the job. It writes a JUnit report and a
+# job summary.
 #
-# What this is NOT:
-#   - Not a hosted product endpoint. `api-url` is supplied by the caller and is
-#     called as-is; this action does not start, host, or deploy any API of its
-#     own. Bring up a SwarmApi.Api instance yourself first (see the root
-#     README's "Quickstart" — `dotnet run --project backend/src/SwarmApi.Api`,
-#     or `docker compose up` in `docker/`) and pass its base URL in.
-#   - Authentication is optional, as it is in SwarmApi.Api itself: pass
-#     `api-token` (a bearer token from the authservice instance the API trusts)
-#     when the API runs in Enforced mode — docs/adr/0005-mcp-server-and-bearer-auth.md.
-#     Only the mission POST needs it; state reads stay open.
-#   - NOT real collision/violation detection. As of this writing, the
-#     SwarmApi.Domain model (backend/src/SwarmApi.Domain/) has no
-#     "violation"/"collision" concept at all — that will come from the
-#     scenario-library + report work in issues #12-#18, landing in parallel
-#     with this one, and is not yet wired into this API. This action therefore
-#     does NOT invent a fake collision-detection API contract. The only
-#     degraded-state signal it checks is one the API genuinely exposes today:
-#     a drone reported with status "Error" in GET /api/swarm/state
-#     (SwarmApi.Domain.DroneStatus.Error). Once #12-#18 land and expose a real
-#     violation/collision field, this action should be updated to check it —
-#     until then, treat this action as proving the CI-check plumbing only.
+# The swarm under test is swarmsim's own reference swarm unless `sut` names another one:
+# MODULE:ATTRIBUTE importable from the workspace, implementing the protocol in
+# swarm_coordination/swarm_coordination/scenarios/sut.py.
+#
+#   - uses: konradcinkusz/swarmsim@<ref>
+#     with:
+#       scenarios: scenarios          # files or directories
+#       seeds: "3"
+#
+# What it is not: a flight-dynamics simulator. L0 checks the swarm's decisions; the SITL
+# smoke (.github/workflows/sim-smoke.yml) checks that PX4 flies them.
 # =============================================================================
 
-name: "SwarmSim Mission Smoke Test"
+name: "SwarmSim Scenario Check"
 description: >-
-  Proof-of-concept: POSTs a mission definition to a running SwarmApi.Api instance and
-  polls its swarm state a few times, failing on HTTP errors, malformed responses, or a
-  drone-reported "Error" status. Does not host or deploy the API, and does not detect
-  real collisions/violations (that needs issues #12-#18 wired in first — see the header
-  comment above).
+  Runs swarm scenarios (YAML) against a system under test in a seeded kinematic
+  simulation inside this job, and fails it when a scenario fails. Writes a JUnit report
+  and a job summary; calls no external service.
 author: "swarmsim"
+branding:
+  icon: "check-circle"
+  color: "blue"
 
 inputs:
-  api-url:
+  scenarios:
+    description: "Scenario files or directories, space-separated, relative to the workspace."
+    required: false
+    default: "scenarios"
+  seeds:
+    description: "How many seeds each scenario runs with; it passes only if every seed does."
+    required: false
+    default: "3"
+  seed:
+    description: "The first seed. The same seed reproduces a run exactly."
+    required: false
+    default: "1"
+  sut:
     description: >-
-      Base URL of an already-running SwarmApi.Api instance, e.g.
-      http://localhost:5000 (bare `dotnet run`) or http://localhost:8080 (fronted by
-      `docker compose up` in docker/). This action calls exactly this URL and nothing
-      else -- it is not a hosted product endpoint, and it does not start one for you.
-    required: true
-  mission-json:
-    description: >-
-      The mission to submit, as an inline JSON string matching the POST
-      /api/missions request body documented in the root README's Quickstart, e.g.:
-      {"name":"Perimeter sweep","type":"waypoint","waypoints":[{"x":0,"y":0,"z":5},
-      {"x":10,"y":0,"z":5}],"droneCount":3,"spacingMeters":2.0}. This action takes
-      the mission inline (rather than a path to a JSON file in the calling repo) so
-      it stays a single self-contained step with no assumptions about the caller's
-      checkout layout; a caller that keeps its mission in a file can pass
-      `$(cat path/to/mission.json)` as this input's value.
-    required: true
-  api-token:
-    description: >-
-      Optional bearer token for POST /api/missions, needed only when SwarmApi.Api runs in
-      Enforced auth mode (Auth:Authority configured). Pass it from a secret, never inline.
+      MODULE:ATTRIBUTE of the swarm to test, importable from the workspace (a class, a
+      factory, or an instance). Empty: swarmsim's reference swarm.
     required: false
     default: ""
-  poll-attempts:
-    description: "How many times to poll GET /api/swarm/state after submitting the mission."
+  mutation-check:
+    description: >-
+      "true": also run every scenario against deliberately broken versions of the
+      reference swarm, and fail if a scenario catches none of them or a broken swarm
+      passes them all. Reference swarm only.
     required: false
-    default: "5"
-  poll-interval-seconds:
-    description: "Seconds to sleep between each swarm-state poll (short sleeps only -- this is not a long-poll loop)."
+    default: "false"
+  junit-path:
+    description: "Where to write the JUnit XML report."
     required: false
-    default: "2"
+    default: "swarmsim-scenarios.xml"
+  job-summary:
+    description: '"true": append the Markdown report to the job summary.'
+    required: false
+    default: "true"
+  python-version:
+    description: "Python the runner runs on."
+    required: false
+    default: "3.11"
 
 outputs:
-  mission-id:
-    description: "The id of the created mission, as returned by POST /api/missions."
-    value: ${{ steps.submit-mission.outputs.mission-id }}
+  passed:
+    description: '"true" when every scenario met its expectation, "false" otherwise.'
+    value: ${{ steps.run.outputs.passed }}
+  junit-path:
+    description: "The JUnit XML report."
+    value: ${{ steps.run.outputs.junit-path }}
 
 runs:
   using: "composite"
   steps:
-    - name: Submit mission
-      id: submit-mission
+    - uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install the scenario runner's dependencies
+      shell: bash
+      run: python -m pip install --disable-pip-version-check --quiet "pyyaml>=6" "jsonschema>=4.18"
+
+    - name: Run the scenarios
+      id: run
       shell: bash
       env:
-        API_URL: ${{ inputs.api-url }}
-        MISSION_JSON: ${{ inputs.mission-json }}
-        API_TOKEN: ${{ inputs.api-token }}
+        ACTION_PATH: ${{ github.action_path }}
+        SCENARIOS: ${{ inputs.scenarios }}
+        SEEDS: ${{ inputs.seeds }}
+        SEED: ${{ inputs.seed }}
+        SUT: ${{ inputs.sut }}
+        MUTATION: ${{ inputs.mutation-check }}
+        JUNIT: ${{ inputs.junit-path }}
+        SUMMARY: ${{ inputs.job-summary }}
       run: |
         set -euo pipefail
+        read -r -a paths <<< "$SCENARIOS"
+        args=(run "${paths[@]}" --seed "$SEED" --seeds "$SEEDS" --junit "$JUNIT")
+        if [ "$SUMMARY" = "true" ]; then args+=(--markdown "$GITHUB_STEP_SUMMARY"); fi
+        if [ -n "$SUT" ]; then args+=(--sut "$SUT"); fi
+        if [ "$MUTATION" = "true" ]; then args+=(--mutants); fi
 
-        if ! command -v jq >/dev/null 2>&1; then
-          echo "::error::jq is required by this action but was not found on PATH. GitHub-hosted ubuntu/windows/macos runners include it by default; self-hosted runners must install it first."
-          exit 1
-        fi
-
-        api_url="${API_URL%/}"
-
-        if [ -z "$api_url" ]; then
-          echo "::error::input 'api-url' is empty."
-          exit 1
-        fi
-
-        if ! printf '%s' "$MISSION_JSON" | jq -e . >/dev/null 2>&1; then
-          echo "::error::input 'mission-json' is not valid JSON."
-          exit 1
-        fi
-
-        # ${arr[@]+...} rather than "${arr[@]}": macOS runners ship bash 3.2, where an
-        # empty array under `set -u` is an unbound-variable error.
-        auth_header=()
-        if [ -n "$API_TOKEN" ]; then
-          echo "::add-mask::$API_TOKEN"
-          auth_header=(-H "Authorization: Bearer $API_TOKEN")
-        fi
-
-        http_body="$(mktemp)"
+        echo "junit-path=$JUNIT" >> "$GITHUB_OUTPUT"
         set +e
-        http_code=$(curl -sS -o "$http_body" -w '%{http_code}' \
-          --max-time 15 \
-          -X POST "$api_url/api/missions" \
-          -H 'Content-Type: application/json' \
-          ${auth_header[@]+"${auth_header[@]}"} \
-          -d "$MISSION_JSON")
-        curl_status=$?
+        PYTHONPATH="$ACTION_PATH/swarm_coordination${PYTHONPATH:+:$PYTHONPATH}" \
+          python -m swarm_coordination.scenarios "${args[@]}"
+        status=$?
         set -e
-
-        if [ "$curl_status" -ne 0 ]; then
-          echo "::error::curl could not reach $api_url/api/missions (exit code $curl_status) -- is api-url correct and is the API actually running?"
-          exit 1
+        if [ "$status" -eq 0 ]; then
+          echo "passed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          echo "::error::swarm scenarios failed (exit $status) — the report above and $JUNIT say which and why"
         fi
-
-        echo "POST /api/missions -> HTTP $http_code"
-        cat "$http_body"
-        echo
-
-        if [ "$http_code" = "401" ]; then
-          echo "::error::POST /api/missions returned 401: the API runs in Enforced auth mode. Pass a bearer token through the 'api-token' input."
-          exit 1
-        fi
-
-        if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-          echo "::error::POST /api/missions returned HTTP $http_code (expected 2xx). Response body printed above."
-          exit 1
-        fi
-
-        if ! jq -e . "$http_body" >/dev/null 2>&1; then
-          echo "::error::POST /api/missions returned HTTP $http_code but the response body is not valid JSON -- malformed response."
-          exit 1
-        fi
-
-        mission_id=$(jq -r '.id // empty' "$http_body")
-        if [ -z "$mission_id" ]; then
-          echo "::error::POST /api/missions returned a 2xx response with no .id field -- malformed response body (expected the created Mission)."
-          exit 1
-        fi
-
-        echo "Created mission $mission_id"
-        echo "mission-id=$mission_id" >> "$GITHUB_OUTPUT"
-
-    - name: Poll swarm state
-      shell: bash
-      env:
-        API_URL: ${{ inputs.api-url }}
-        POLL_ATTEMPTS: ${{ inputs.poll-attempts }}
-        POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
-      run: |
-        set -euo pipefail
-
-        if ! command -v jq >/dev/null 2>&1; then
-          echo "::error::jq is required by this action but was not found on PATH."
-          exit 1
-        fi
-
-        api_url="${API_URL%/}"
-
-        case "$POLL_ATTEMPTS" in
-          ''|*[!0-9]*)
-            echo "::error::input 'poll-attempts' must be a non-negative integer, got '$POLL_ATTEMPTS'."
-            exit 1
-            ;;
-        esac
-        case "$POLL_INTERVAL_SECONDS" in
-          ''|*[!0-9]*)
-            echo "::error::input 'poll-interval-seconds' must be a non-negative integer, got '$POLL_INTERVAL_SECONDS'."
-            exit 1
-            ;;
-        esac
-
-        attempt=1
-        while [ "$attempt" -le "$POLL_ATTEMPTS" ]; do
-          echo "--- poll $attempt/$POLL_ATTEMPTS ---"
-
-          http_body="$(mktemp)"
-          set +e
-          http_code=$(curl -sS -o "$http_body" -w '%{http_code}' \
-            --max-time 15 \
-            "$api_url/api/swarm/state")
-          curl_status=$?
-          set -e
-
-          if [ "$curl_status" -ne 0 ]; then
-            echo "::error::curl could not reach $api_url/api/swarm/state (exit code $curl_status) -- is api-url correct and is the API actually running?"
-            exit 1
-          fi
-
-          echo "GET /api/swarm/state -> HTTP $http_code"
-          cat "$http_body"
-          echo
-
-          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-            echo "::error::GET /api/swarm/state returned HTTP $http_code (expected 2xx). Response body printed above."
-            exit 1
-          fi
-
-          if ! jq -e 'has("drones") and has("bridgeMode") and has("timestampUtc")' "$http_body" >/dev/null 2>&1; then
-            echo "::error::GET /api/swarm/state returned HTTP $http_code but the response body is missing expected fields (drones/bridgeMode/timestampUtc) -- malformed response, or not valid JSON at all."
-            exit 1
-          fi
-
-          bridge_mode=$(jq -r '.bridgeMode' "$http_body")
-          error_drone_count=$(jq -r '[.drones[]? | select(.status == "Error")] | length' "$http_body")
-          echo "bridgeMode=$bridge_mode, drones-with-status-Error=$error_drone_count"
-
-          if [ "$error_drone_count" != "0" ]; then
-            echo "::error::$error_drone_count drone(s) reported status \"Error\" in GET /api/swarm/state. This is the one degraded-state signal SwarmApi exposes today (DroneStatus.Error) -- NOT a real collision/violation check (see this action's header comment: that needs issues #12-#18 wired into the API first)."
-            exit 1
-          fi
-
-          attempt=$((attempt + 1))
-          if [ "$attempt" -le "$POLL_ATTEMPTS" ]; then
-            sleep "$POLL_INTERVAL_SECONDS"
-          fi
-        done
-
-        echo "Polled GET /api/swarm/state $POLL_ATTEMPTS time(s): no HTTP errors, no malformed responses, no drone in status \"Error\"."
+        exit "$status"

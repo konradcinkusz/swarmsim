@@ -2,11 +2,12 @@
 
 Subscribes to `/swarm/mission` and `/swarm/command` — JSON in a `std_msgs/String`, the
 payloads in contracts/rosbridge/ that `SwarmApi.Infrastructure.RosBridgeSwarmBridge`
-publishes over rosbridge. A mission is parsed and planned by the rclpy-free
-`mission_planning` module; each drone then gets its part on `/<drone>/mission/assignment`
-(a path) or `/<drone>/mission/slot` (a place behind the leader). A command goes to every
-drone on `/<drone>/mission/command`, whatever it is doing. The current mission and its
-drones are latched on `/swarm/active_mission` for the state aggregator.
+publishes over rosbridge — and to every drone's battery and mission progress. What to do
+with them is decided by the rclpy-free `supervisor.MissionSupervisor`: which drones fly a
+mission, and which drone takes over when one runs low on battery. This node only carries
+its decisions out: a path on `/<drone>/mission/assignment`, a place behind the leader on
+`/<drone>/mission/slot`, a command on `/<drone>/mission/command`, and the current
+mission and its drones latched on `/swarm/active_mission` for the state aggregator.
 """
 
 from __future__ import annotations
@@ -15,21 +16,37 @@ import json
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+from sensor_msgs.msg import BatteryState
 from std_msgs.msg import String
 
-from ..mission_planning import parse_command_payload, parse_mission_payload, plan_mission
+from ..mission_planning import parse_command_payload, parse_mission_payload
+from ..supervisor import (
+    ActiveMission,
+    Assign,
+    Command,
+    MissionSupervisor,
+    Rejected,
+    Slot,
+    TaskDropped,
+)
+from ..swarm_state import battery_percent
 
 LATCHED = QoSProfile(
     depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE
 )
+REALLOCATION_PERIOD_S = 1.0
 
 
 class MissionDispatcherNode(Node):
     def __init__(self) -> None:
         super().__init__("mission_dispatcher_node")
         self.declare_parameter("drones", ["drone_1"])
+        self.declare_parameter("battery_threshold_pct", 20.0)
         self._drones = [str(d) for d in self.get_parameter("drones").value]
+        self._supervisor = MissionSupervisor(
+            self._drones, float(self.get_parameter("battery_threshold_pct").value)
+        )
 
         # Every drone's publishers exist from the start, not from the first mission: a
         # publisher created just before its first message may not be matched with its
@@ -44,7 +61,18 @@ class MissionDispatcherNode(Node):
         self._active_pub = self.create_publisher(String, "/swarm/active_mission", LATCHED)
         self.create_subscription(String, "/swarm/mission", self._on_mission, 10)
         self.create_subscription(String, "/swarm/command", self._on_command, 10)
-        self._publish_active(None, [])
+        for drone in self._drones:
+            self.create_subscription(
+                BatteryState,
+                f"/{drone}/mavros/battery",
+                self._on_battery(drone),
+                qos_profile_sensor_data,
+            )
+            self.create_subscription(
+                String, f"/{drone}/mission/progress", self._on_progress(drone), 10
+            )
+        self.create_timer(REALLOCATION_PERIOD_S, self._reallocate)
+        self._carry_out([ActiveMission(None, ())])
         self.get_logger().info(f"mission_dispatcher_node ready for {self._drones}")
 
     def _publisher(self, topic: str):
@@ -52,38 +80,19 @@ class MissionDispatcherNode(Node):
             self._topic_publishers[topic] = self.create_publisher(String, topic, 10)
         return self._topic_publishers[topic]
 
-    def _publish_active(self, mission_id: str | None, drones: list[str]) -> None:
-        payload = {"mission_id": mission_id, "drones": drones}
-        self._active_pub.publish(String(data=json.dumps(payload)))
+    def _send(self, topic: str, payload) -> None:
+        text = payload if isinstance(payload, str) else json.dumps(payload)
+        self._publisher(topic).publish(String(data=text))
+
+    # --- what the swarm and the operator say --------------------------------------------
 
     def _on_mission(self, msg: String) -> None:
         try:
-            plan = plan_mission(parse_mission_payload(msg.data))
+            mission = parse_mission_payload(msg.data)
         except ValueError as exc:
             self.get_logger().error(f"rejected /swarm/mission: {exc}")
             return
-
-        missing = [d for d in plan.drones if d not in self._drones]
-        if missing:
-            self.get_logger().error(
-                f"rejected mission {plan.mission_id}: it needs {missing}, "
-                f"but only {self._drones} are running"
-            )
-            return
-
-        for drone, path in plan.paths.items():
-            payload = {"mission_id": plan.mission_id, "waypoints": [[w.x, w.y, w.z] for w in path]}
-            self._publisher(f"/{drone}/mission/assignment").publish(String(data=json.dumps(payload)))
-        for drone, (leader, offset) in plan.followers.items():
-            payload = {
-                "mission_id": plan.mission_id,
-                "leader": leader,
-                "offset": [offset.x, offset.y, offset.z],
-            }
-            self._publisher(f"/{drone}/mission/slot").publish(String(data=json.dumps(payload)))
-
-        self._publish_active(plan.mission_id, plan.drones)
-        self.get_logger().info(f"dispatched mission {plan.mission_id} to {plan.drones}")
+        self._carry_out(self._supervisor.start(mission))
 
     def _on_command(self, msg: String) -> None:
         try:
@@ -91,11 +100,71 @@ class MissionDispatcherNode(Node):
         except ValueError as exc:
             self.get_logger().error(f"rejected /swarm/command: {exc}")
             return
-
-        for drone in self._drones:
-            self._publisher(f"/{drone}/mission/command").publish(String(data=command.command))
-        self._publish_active(None, [])
+        self._carry_out(self._supervisor.command(command))
         self.get_logger().warning(f"swarm command '{command.command}' sent to {self._drones}")
+
+    def _on_battery(self, drone: str):
+        def handler(msg: BatteryState) -> None:
+            self._supervisor.observe_battery(drone, battery_percent(msg.percentage))
+
+        return handler
+
+    def _on_progress(self, drone: str):
+        def handler(msg: String) -> None:
+            try:
+                progress = json.loads(msg.data)
+                self._supervisor.observe_progress(
+                    drone,
+                    progress.get("mission_id"),
+                    progress.get("waypoint_index"),
+                    bool(progress.get("complete")),
+                )
+            except (ValueError, AttributeError):
+                return
+
+        return handler
+
+    def _reallocate(self) -> None:
+        self._carry_out(self._supervisor.reallocate())
+
+    # --- what the supervisor decided ----------------------------------------------------
+
+    def _carry_out(self, actions) -> None:
+        for action in actions:
+            if isinstance(action, Assign):
+                self._send(
+                    f"/{action.drone}/mission/assignment",
+                    {
+                        "mission_id": action.mission_id,
+                        "waypoints": [[w.x, w.y, w.z] for w in action.waypoints],
+                    },
+                )
+            elif isinstance(action, Slot):
+                offset = action.offset
+                self._send(
+                    f"/{action.drone}/mission/slot",
+                    {
+                        "mission_id": action.mission_id,
+                        "leader": action.leader,
+                        "offset": [offset.x, offset.y, offset.z],
+                    },
+                )
+            elif isinstance(action, Command):
+                self._send(f"/{action.drone}/mission/command", action.command)
+            elif isinstance(action, ActiveMission):
+                payload = {"mission_id": action.mission_id, "drones": list(action.drones)}
+                self._active_pub.publish(String(data=json.dumps(payload)))
+                if action.mission_id is not None:
+                    self.get_logger().info(
+                        f"mission {action.mission_id} flown by {list(action.drones)}"
+                    )
+            elif isinstance(action, Rejected):
+                self.get_logger().error(f"rejected mission {action.mission_id}: {action.reason}")
+            elif isinstance(action, TaskDropped):
+                self.get_logger().error(
+                    f"{action.drone} sent home, its task in mission {action.mission_id} "
+                    f"dropped: {action.reason}"
+                )
 
 
 def main() -> None:
@@ -106,7 +175,3 @@ def main() -> None:
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
-
-if __name__ == "__main__":
-    main()

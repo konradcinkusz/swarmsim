@@ -7,6 +7,12 @@ is done — landing where a path ends, or where the leader lands — or when a s
 pre-empts it (:mod:`commands`). It reports its progress so the swarm can tell when a
 mission is complete. Everything here is in the world frame; the node converts to and from
 the drone's own local frame (:mod:`frames`). No rclpy: unit tested without ROS.
+
+Comms-loss policy for a follower (the one place it is decided): while its leader's
+position stops arriving, the follower holds the slot it last knew — it does not chase a
+target it can no longer see move. If the leader is heard from again within
+``comms_timeout_s``, it resumes and catches up. If not, it gives up and hands the vehicle
+to PX4's return-to-launch; that is final for the task, even if the leader comes back.
 """
 
 from __future__ import annotations
@@ -52,10 +58,12 @@ class DroneController:
         max_step_m: float = 2.0,
         warmup_ticks: int = 20,
         retry_interval_s: float = 1.0,
+        comms_timeout_s: float = 5.0,
     ) -> None:
         self.drone_id = drone_id
         self.tolerance_m = tolerance_m
         self.max_step_m = max_step_m
+        self.comms_timeout_s = comms_timeout_s
         self._offboard = OffboardSequencer(warmup_ticks, retry_interval_s)
         self._retry_interval_s = retry_interval_s
         self._mission_id: str | None = None
@@ -99,12 +107,23 @@ class DroneController:
         armed: bool | None,
         mode: str | None,
         leader_position: Vector3 | None = None,
+        leader_updated_s: float | None = None,
     ) -> ControllerOutput:
+        """One control step. ``leader_updated_s``: when the leader's position last arrived."""
         if self._handover_mode is not None:
             return self._keep_handing_over(now_s, armed, mode)
 
         if position is None or (self._queue is None and self._leader is None):
             return ControllerOutput()
+
+        if (
+            self._leader is not None
+            and leader_updated_s is not None
+            and now_s - leader_updated_s > self.comms_timeout_s
+        ):
+            # Held the last known slot for the whole timeout: go home (module docstring).
+            self._handover("AUTO.RTL")
+            return self._keep_handing_over(now_s, armed, mode)
 
         target = self._target(position, leader_position)
         if target is None:

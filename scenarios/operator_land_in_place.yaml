@@ -1,0 +1,20 @@
+version: 1
+name: operator_land_in_place
+description: >
+  Three drones are 15 s into a 60 m route when the operator commands "land". Every
+  drone must stop where it is and land — within 20 s — rather than finish the route.
+drones: 3
+duration_s: 60
+events:
+  - at_s: 1
+    mission:
+      type: waypoint
+      waypoints: [[0, 0, 5], [60, 0, 5]]
+      drone_count: 3
+      spacing_m: 3
+  - at_s: 15
+    command: land
+assertions:
+  - all_landed: {by_s: 35}
+  - final_position: {drone: drone_1, position: [16, 0, 0], tolerance_m: 6}
+  - min_separation: {min_m: 1.5}

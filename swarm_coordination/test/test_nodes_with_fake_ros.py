@@ -115,7 +115,7 @@ def test_the_dispatcher_turns_the_contract_example_into_a_path_and_two_slots(bus
     }
 
 
-def test_the_dispatcher_refuses_a_mission_needing_drones_that_are_not_running(bus):
+def test_the_dispatcher_refuses_a_mission_needing_more_drones_than_are_running(bus):
     node = _node(bus, "mission_dispatcher_node", "MissionDispatcherNode", drones=["drone_1"])
 
     bus.publish(
@@ -124,7 +124,64 @@ def test_the_dispatcher_refuses_a_mission_needing_drones_that_are_not_running(bu
     )
 
     assert bus.messages("/drone_1/mission/assignment") == []
-    assert any(level == "error" and "drone_2" in text for level, text in node.get_logger().lines)
+    assert any(
+        level == "error" and "needs 3 drone(s)" in text for level, text in node.get_logger().lines
+    )
+
+
+def test_the_dispatcher_plans_around_a_drone_already_low_on_battery(bus):
+    _node(
+        bus,
+        "mission_dispatcher_node",
+        "MissionDispatcherNode",
+        drones=["drone_1", "drone_2", "drone_3", "drone_4"],
+    )
+    bus.publish("/drone_1/mavros/battery", fake_ros.BatteryState(percentage=0.12))
+
+    bus.publish(
+        "/swarm/mission",
+        fake_ros.String((CONTRACTS / "examples" / "swarm_mission.json").read_text()),
+    )
+
+    assert bus.messages("/drone_1/mission/assignment") == []
+    assert _json(bus.messages("/drone_2/mission/assignment")[0])["mission_id"] == MISSION
+    assert _json(bus.messages("/drone_3/mission/slot")[0])["leader"] == "drone_2"
+    assert _json(bus.messages("/drone_4/mission/slot")[0])["leader"] == "drone_2"
+    assert _json(bus.messages("/swarm/active_mission")[-1])["drones"] == [
+        "drone_2",
+        "drone_3",
+        "drone_4",
+    ]
+
+
+def test_the_dispatcher_hands_a_low_battery_leaders_route_to_an_idle_drone(bus):
+    node = _node(
+        bus,
+        "mission_dispatcher_node",
+        "MissionDispatcherNode",
+        drones=["drone_1", "drone_2", "drone_3", "drone_4"],
+    )
+    for drone in ("drone_1", "drone_2", "drone_3", "drone_4"):
+        bus.publish(f"/{drone}/mavros/battery", fake_ros.BatteryState(percentage=0.9))
+    bus.publish(
+        "/swarm/mission",
+        fake_ros.String((CONTRACTS / "examples" / "swarm_mission.json").read_text()),
+    )
+    progress = {"mission_id": MISSION, "waypoint_index": 1, "waypoint_count": 2, "complete": False}
+    bus.publish("/drone_1/mission/progress", fake_ros.String(json.dumps(progress)))
+
+    bus.publish("/drone_1/mavros/battery", fake_ros.BatteryState(percentage=0.15))
+    fake_ros.fire(node)
+
+    assert bus.messages("/drone_1/mission/command")[-1].data == "rtl"
+    handed_over = _json(bus.messages("/drone_4/mission/assignment")[-1])
+    assert handed_over == {"mission_id": MISSION, "waypoints": [[10.0, 0.0, 5.0]]}
+    assert _json(bus.messages("/drone_2/mission/slot")[-1])["leader"] == "drone_4"
+    assert _json(bus.messages("/swarm/active_mission")[-1])["drones"] == [
+        "drone_2",
+        "drone_3",
+        "drone_4",
+    ]
 
 
 def test_the_dispatcher_ignores_a_malformed_mission(bus):

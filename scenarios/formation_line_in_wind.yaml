@@ -1,0 +1,24 @@
+version: 1
+name: formation_line_in_wind
+description: >
+  The formation_line flight in a 4 m/s crosswind with gusts (1.5 m/s standard deviation)
+  and 0.3 m of GPS noise on every drone. The slots may wander further than in calm air,
+  but not by more than 3 m, and the drones must still keep their distance.
+drones: 5
+duration_s: 90
+world:
+  wind: {mean_m_s: [1, 4, 0], gust_std_m_s: 1.5, gust_time_constant_s: 4}
+  gps_noise_std_m: 0.3
+events:
+  - at_s: 1
+    mission:
+      type: formation
+      formation: line
+      waypoints: [[0, 0, 6], [40, 0, 6]]
+      drone_count: 5
+      spacing_m: 3
+assertions:
+  - min_separation: {min_m: 1.5}
+  - formation_error: {max_m: 3.0, from_s: 20}
+  - mission_completes: {within_s: 80}
+  - all_landed: {by_s: 90}
