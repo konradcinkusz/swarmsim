@@ -28,6 +28,10 @@ SPAWN_SPACING_M = 3.0  # simulation/px4-configs: drone_n spawns at (0, 3 * (n - 
 # has drifted more than twice its vertical accuracy (about 0.5 m here) — so a drone on
 # the ground reads within about half a metre of 0, and 1 m leaves room for that.
 GROUND_TOLERANCE_M = 1.0
+# A drone that has not climbed a metre this long after its mission was posted is not going
+# to: green runs are airborne within seconds. Failing then, rather than at the mission's
+# 420 s timeout, names the drone and leaves time to fly again (docs/adr/0004).
+TAKEOFF_TIMEOUT_S = 90.0
 results: list[tuple[str, str, str]] = []
 
 
@@ -146,12 +150,19 @@ def run(api: str, drones: int) -> None:
 
     max_altitude: dict[str, float] = {}
     state_ages: list[float] = []
+    posted = time.monotonic()
 
     def completed():
         current = state(api)
         for drone in current["drones"]:
             max_altitude[drone["id"]] = max(max_altitude.get(drone["id"], 0.0), drone["position"]["z"])
             state_ages.append(age_seconds(drone["lastUpdatedUtc"]))
+        grounded = sorted(d for d, z in max_altitude.items() if z < 1.0)
+        if grounded and time.monotonic() - posted > TAKEOFF_TIMEOUT_S:
+            raise SmokeFailure(
+                f"{', '.join(grounded)} never took off: no climb above 1 m within "
+                f"{TAKEOFF_TIMEOUT_S:.0f}s of the mission; last seen: {current['drones']}"
+            )
         _, fetched = call(api, "GET", f"/api/missions/{mission_id}")
         return fetched["status"] == "Completed", {"mission": fetched["status"], "drones": current["drones"]}
 

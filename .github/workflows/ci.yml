@@ -243,6 +243,7 @@ jobs:
       - name: Shell scripts (shellcheck) and entrypoint logic (stubbed)
         run: |
           shellcheck docker/entrypoint.sh docker/tests/test_entrypoint.sh docker/tests/px4_state.sh \
+            docker/tests/px4_sensor_stall.sh \
             scripts/*.sh scripts/hooks/pre-commit
           shellcheck -s sh simulation/px4-configs/px4-rc.params
           bash docker/tests/test_entrypoint.sh

@@ -110,4 +110,6 @@ Do not attempt to build `Dockerfile.sim` or run Gazebo/PX4 SITL inside an agent 
 the build takes tens of minutes and the sandbox's network policy blocks hosts it needs.
 The headless stack needs no GPU, though — only the optional GUI does — so it runs on a
 GitHub Actions runner instead: push, and read the `SITL smoke` job's summary and its
-`sitl-logs` artifact (every tmux pane, Gazebo's log, the compose logs).
+`sitl-logs` artifact (every tmux pane, Gazebo's log, the compose logs). A first flight
+that fails with `stalled drone_N` hit PX4's own simulated-sensor stall (docs/adr/0004,
+2026-09-23): the job flies once more on a fresh stack. Any other failure is real.

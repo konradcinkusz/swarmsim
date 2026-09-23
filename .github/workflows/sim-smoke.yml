@@ -92,10 +92,47 @@ jobs:
         with:
           python-version: "3.11"
 
+      # The verdict is the last step: a failed flight is first checked for PX4's own
+      # simulated-sensor stall, the one fault that gets a second flight (docs/adr/0004,
+      # 2026-09-23). Any other failure fails the job.
       - name: Fly the swarm
+        id: fly
+        continue-on-error: true
         run: >
           python3 docker/tests/sitl_smoke.py --api http://localhost:8080 --drones "${DRONES}"
           --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Check a failed flight for PX4's simulated-sensor stall
+        id: stall
+        if: steps.fly.outcome == 'failure'
+        working-directory: docker
+        run: |
+          docker compose exec -T sim bash -s -- "${DRONES}" < tests/px4_sensor_stall.sh \
+            | tee ../stall.txt
+          if grep -q '^stalled ' ../stall.txt; then
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+            echo "::warning title=PX4 SITL fault::$(head -n 1 ../stall.txt). Flying once more on a fresh stack (docs/adr/0004)."
+            {
+              echo ""
+              echo "**The flight above failed on PX4's simulated-sensor stall** ($(head -n 1 ../stall.txt))."
+              echo "PX4-Autopilot#23130; see docs/adr/0004. The stack is restarted and flown once more:"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Restart the stack and fly once more
+        id: retry
+        if: steps.stall.outputs.retry == 'true'
+        working-directory: docker
+        run: |
+          # The first flight's evidence, before its containers go.
+          mkdir -p ../sitl-logs/first-flight
+          docker compose logs --no-color > ../sitl-logs/first-flight/compose.log 2>&1 || true
+          docker compose exec -T sim bash -s -- "${DRONES}" < tests/px4_state.sh \
+            > ../sitl-logs/first-flight/px4-state.txt 2>&1 || true
+          docker compose down --timeout 30
+          SWARM_DRONE_COUNT="${DRONES}" docker compose up -d --no-build
+          cd .. && python3 docker/tests/sitl_smoke.py --api http://localhost:8080 \
+            --drones "${DRONES}" --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Collect logs
         if: always()
@@ -129,3 +166,18 @@ jobs:
           name: sitl-logs
           path: sitl-logs
           if-no-files-found: ignore
+
+      - name: Verdict
+        if: always()
+        env:
+          FLIGHT: ${{ steps.fly.outcome }}
+          SECOND_FLIGHT: ${{ steps.retry.outcome }}
+        run: |
+          case "${FLIGHT}/${SECOND_FLIGHT}" in
+            success/*) echo "The swarm flew." ;;
+            failure/success)
+              echo "::warning::The swarm flew on the second flight, after PX4's simulated-sensor stall on the first." ;;
+            *)
+              echo "::error::The SITL flight failed (first: ${FLIGHT}, second: ${SECOND_FLIGHT:-not flown})."
+              exit 1 ;;
+          esac

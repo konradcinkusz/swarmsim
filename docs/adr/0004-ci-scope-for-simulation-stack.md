@@ -104,3 +104,38 @@ Getting there found, run by run, what no test below this layer could have seen:
 What made these findable was putting each PX4 instance's own view into the job log
 (`docker/tests/px4_state.sh`), along with every request a controller made and every
 refusal. A red run can be read without downloading anything.
+
+## Amendment — 2026-09-23: PX4's simulated-sensor stall, and the one fault that gets a second flight
+
+On pull request #30 the smoke failed twice running, runs 14 and 15, the same way both
+times. drone_3 armed, and at that moment its PX4 instance stopped publishing simulated
+GNSS, compass and battery. It lost horizontal position and blind-landed, and PX4 disarmed
+it. drone_1 and drone_2 flew the mission and landed at the ends of their lanes.
+
+- **The fault is inside PX4 v1.15.0's SITL.** GNSS, compass and battery come from PX4
+  modules (`sensor_gps_sim`, `sensor_mag_sim`, `battery_simulator`) that run on
+  periodic HRT timers.
+  - On drone_3 they ran for about 4.8 s of simulated time and never again: 485 battery
+    cycles, against about 42,000 on the other two drones.
+  - gz_bridge's ground truth kept arriving (the attitude was 8 ms old at the end).
+  - Modules woken by uORB callbacks or one-shot timers kept running.
+  - Nothing this repository sends PX4 reaches those modules. Upstream,
+    [PX4-Autopilot#23130](https://github.com/PX4/PX4-Autopilot/issues/23130) reports the
+    same loss of GNSS with ten gz vehicles. It is open, with no fix.
+- **The mechanism is probably, but not certainly, this:** the posix HRT's `hrt_call_invoke`
+  unlocks to run a callout, then re-enters a periodic call without checking whether
+  another thread armed that same call meanwhile. A call linked twice into the callout
+  queue cuts the calls behind it out of the queue. Confirming that needs a patched PX4
+  build flown many times; until then it stays a hypothesis.
+- **What the smoke does about it:**
+  - A drone that has not climbed a metre 90 s after its mission fails the flight
+    (`TAKEOFF_TIMEOUT_S`), instead of at the mission's 420 s timeout.
+  - After a failed flight, `docker/tests/px4_sensor_stall.sh` checks every instance.
+    Only one whose `sensor_gps` is more than 5 s stale while its `vehicle_status` is
+    fresh counts as this fault.
+  - Only then is the stack restarted and flown once more, and the job summary and a
+    warning say so. Any other failure, or a second failed flight, fails the job.
+- **Why a second flight and not a fix:** the fault is PX4's, it has no upstream fix, and
+  the retry cannot hide a regression here, because it fires only on a PX4-internal
+  signature. It goes when a PX4 version or a patch in `Dockerfile.sim` removes the fault,
+  shown by flights rather than argued.
