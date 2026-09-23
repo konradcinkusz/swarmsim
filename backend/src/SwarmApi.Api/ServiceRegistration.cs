@@ -1,3 +1,4 @@
+using SwarmApi.Api.Idempotency;
 using SwarmApi.Application;
 
 namespace SwarmApi.Api;
@@ -8,13 +9,26 @@ namespace SwarmApi.Api;
 /// </summary>
 public static class ServiceRegistration
 {
-    /// <summary>The mission use case and the envelope it validates against (<c>Missions</c> section).</summary>
+    /// <summary>
+    /// The mission use cases — direct dispatch, and the plan → approve → dispatch gate for
+    /// agents (docs/adr/0009) — with the envelope they validate against (<c>Missions</c>),
+    /// how plans are checked (<c>Planning</c>), and replay-safe writes (<c>Idempotency-Key</c>).
+    /// </summary>
     public static IServiceCollection AddSwarmMissions(this IServiceCollection services, IConfiguration configuration)
     {
         var limits = configuration.GetSection(MissionLimits.SectionName).Get<MissionLimits>() ?? MissionLimits.Default;
+        var planning = configuration.GetSection(PlanningOptions.SectionName).Get<PlanningOptions>() ?? PlanningOptions.Default;
         services.AddSingleton(limits);
+        services.AddSingleton(planning);
         services.AddSingleton(sp => new MissionService(
             sp.GetRequiredService<ISwarmBridge>(), limits, sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new MissionPlanService(
+            sp.GetRequiredService<MissionService>(),
+            sp.GetRequiredService<ISwarmBridge>(),
+            limits,
+            planning,
+            sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new IdempotencyStore(sp.GetRequiredService<TimeProvider>()));
         return services;
     }
 

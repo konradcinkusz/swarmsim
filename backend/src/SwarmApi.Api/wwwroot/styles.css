@@ -124,3 +124,39 @@ button:disabled {
 .status-Landing { color: #f59e0b; }
 .status-TakingOff { color: #f59e0b; }
 .status-Error { color: #ef4444; }
+
+button.danger {
+  background: #b91c1c;
+  color: #fff;
+  border-color: #991b1b;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.plan {
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.plan h3 {
+  margin: 0.25rem 0;
+}
+
+.plan-Conflicted {
+  border-color: #ef4444;
+}
+
+.plan-Approved {
+  border-color: #22c55e;
+}
+
+.approval-code {
+  font-size: 1.1em;
+  padding: 0.1rem 0.4rem;
+  user-select: all;
+}

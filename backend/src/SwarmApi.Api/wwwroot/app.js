@@ -1,9 +1,12 @@
-// Polls GET /api/swarm/state and renders it — the read-only half of M4's acceptance
-// criterion ("obejrzeć trwającą misję i odczytać status każdego drona bez zaglądania w
-// terminal"). The demo-mission button below is a convenience for trying this without a
-// terminal at all, not a substitute for POST /api/missions as the real integration point.
+// Polls GET /api/swarm/state and renders it — M4's acceptance criterion ("obejrzeć
+// trwającą misję i odczytać status każdego drona bez zaglądania w terminal") — and is the
+// person's side of the agent write gate (docs/adr/0009): mission plans are approved or
+// rejected here, and an approval shows its single-use code once. Stopping (abort, land
+// all) is never gated. The demo-mission button is a convenience, not the integration point.
 
 const POLL_INTERVAL_MS = 1000;
+const PLAN_POLL_INTERVAL_MS = 2000;
+const OPEN_PLAN_STATUSES = ["PendingApproval", "Conflicted", "Approved"];
 
 const bridgeModeEl = document.getElementById("bridge-mode");
 const tableBody = document.querySelector("#drone-table tbody");
@@ -12,6 +15,18 @@ const canvas = document.getElementById("plot");
 const ctx = canvas.getContext("2d");
 const demoBtn = document.getElementById("demo-mission-btn");
 const demoStatusEl = document.getElementById("demo-status");
+const activeMissionEl = document.getElementById("active-mission");
+const abortBtn = document.getElementById("abort-btn");
+const landAllBtn = document.getElementById("land-all-btn");
+const stopStatusEl = document.getElementById("stop-status");
+const plansEl = document.getElementById("plans");
+const noPlansEl = document.getElementById("no-plans");
+
+let activeMissionId = null;
+// Approval codes live only in this page's memory: the API shows each one once, in the
+// approve response, and never again — reloading the page forgets them, by design.
+const approvalCodes = new Map();
+let renderedPlans = "";
 
 async function pollState() {
   try {
@@ -23,6 +38,7 @@ async function pollState() {
     renderBridgeMode(state.bridgeMode);
     renderTable(state.drones ?? []);
     renderPlot(state.drones ?? []);
+    await renderActiveMission(state.activeMissionId);
   } catch (err) {
     bridgeModeEl.textContent = "unreachable";
     bridgeModeEl.className = "badge error";
@@ -163,5 +179,150 @@ demoBtn.addEventListener("click", async () => {
   }
 });
 
+async function renderActiveMission(missionId) {
+  activeMissionId = missionId ?? null;
+  abortBtn.disabled = activeMissionId === null;
+  if (activeMissionId === null) {
+    activeMissionEl.textContent = "No mission is flying.";
+    return;
+  }
+  const response = await fetch(`/api/missions/${activeMissionId}`, { cache: "no-store" });
+  const mission = response.ok ? await response.json() : null;
+  activeMissionEl.textContent = mission
+    ? `"${mission.name}" — ${mission.status} (${mission.droneCount} drones, id ${mission.id})`
+    : `Mission ${activeMissionId}`;
+}
+
+function newKey() {
+  // randomUUID needs a secure context (https or localhost); a key only has to be unique.
+  return crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function send(method, url, body) {
+  const response = await fetch(url, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      // One key per click: a retried click replays the first answer instead of acting twice.
+      "Idempotency-Key": newKey(),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const reason = payload?.detail ?? payload?.title ?? `HTTP ${response.status}`;
+    throw new Error(reason);
+  }
+  return payload;
+}
+
+abortBtn.addEventListener("click", async () => {
+  if (activeMissionId === null) {
+    return;
+  }
+  try {
+    await send("POST", `/api/missions/${activeMissionId}/abort`, { action: "rtl" });
+    stopStatusEl.textContent = "Mission aborted: every drone is returning to its pad.";
+  } catch (err) {
+    stopStatusEl.textContent = `Abort failed: ${err.message}`;
+  }
+  pollState();
+});
+
+landAllBtn.addEventListener("click", async () => {
+  try {
+    await send("POST", "/api/swarm/land");
+    stopStatusEl.textContent = "Land all sent: every drone is landing where it is.";
+  } catch (err) {
+    stopStatusEl.textContent = `Land all failed: ${err.message}`;
+  }
+  pollState();
+});
+
+async function pollPlans() {
+  try {
+    const response = await fetch("/api/mission-plans?limit=20", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`GET /api/mission-plans -> ${response.status}`);
+    }
+    const plans = (await response.json()).filter((p) => OPEN_PLAN_STATUSES.includes(p.status));
+    const snapshot = JSON.stringify([plans, [...approvalCodes]]);
+    if (snapshot !== renderedPlans) {
+      renderedPlans = snapshot;
+      renderPlans(plans);
+    }
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function renderPlans(plans) {
+  noPlansEl.hidden = plans.length > 0;
+  plansEl.innerHTML = "";
+  for (const plan of plans) {
+    const card = document.createElement("article");
+    card.className = `plan plan-${plan.status}`;
+    card.setAttribute("aria-labelledby", `plan-${plan.id}`);
+    const preview = plan.preview ?? {};
+    const conflicts = (preview.conflicts ?? [])
+      .map((c) => `<li>${escapeHtml(c.droneA)} and ${escapeHtml(c.droneB)} within ${fmt(c.distanceMeters)} m at ${fmt(c.atSeconds, 1)} s</li>`)
+      .join("");
+    const code = approvalCodes.get(plan.id);
+    card.innerHTML = `
+      <h3 id="plan-${plan.id}">${escapeHtml(plan.name)}</h3>
+      <p>${escapeHtml(plan.type)}${plan.type === "LeaderFollowerFormation" ? ` (${escapeHtml(plan.formation)})` : ""},
+         ${plan.droneCount} drones, ${plan.waypoints.length} waypoints,
+         about ${fmt(preview.estimatedDurationSeconds, 0)} s,
+         closest approach ${preview.minSeparationMeters == null ? "—" : `${fmt(preview.minSeparationMeters)} m`}.
+         Status: <strong>${escapeHtml(plan.status)}</strong></p>
+      ${conflicts ? `<p>Conflicts — this plan cannot be approved:</p><ul>${conflicts}</ul>` : ""}
+      ${code ? `<p>Approval code (single use, shown once): <code class="approval-code" aria-label="Approval code">${escapeHtml(code)}</code></p>` : ""}
+      <div class="controls"></div>
+      <p class="plan-status" role="status"></p>
+    `;
+    const controls = card.querySelector(".controls");
+    const status = card.querySelector(".plan-status");
+    if (plan.status === "PendingApproval" || plan.status === "Conflicted") {
+      controls.append(button("Approve", plan.status === "Conflicted", async () => {
+        const approval = await send("POST", `/api/mission-plans/${plan.id}/approve`);
+        approvalCodes.set(plan.id, approval.approvalCode);
+      }, status));
+    }
+    if (plan.status === "Approved" && code) {
+      controls.append(button("Dispatch now", false, async () => {
+        await send("POST", `/api/mission-plans/${plan.id}/dispatch`, { approvalCode: code });
+        approvalCodes.delete(plan.id);
+      }, status));
+    }
+    controls.append(button("Reject", false, async () => {
+      await send("POST", `/api/mission-plans/${plan.id}/reject`);
+      approvalCodes.delete(plan.id);
+    }, status));
+    plansEl.appendChild(card);
+  }
+}
+
+function button(label, disabled, action, statusEl) {
+  const el = document.createElement("button");
+  el.type = "button";
+  el.textContent = label;
+  el.disabled = disabled;
+  el.addEventListener("click", async () => {
+    el.disabled = true;
+    try {
+      await action();
+    } catch (err) {
+      statusEl.textContent = `${label} failed: ${err.message}`;
+      el.disabled = false;
+      return;
+    }
+    await pollPlans();
+    pollState();
+  });
+  return el;
+}
+
 pollState();
 setInterval(pollState, POLL_INTERVAL_MS);
+pollPlans();
+setInterval(pollPlans, PLAN_POLL_INTERVAL_MS);

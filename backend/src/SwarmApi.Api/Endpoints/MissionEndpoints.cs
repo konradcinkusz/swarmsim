@@ -1,3 +1,4 @@
+using SwarmApi.Api.Idempotency;
 using SwarmApi.Application;
 using SwarmApi.Application.Contracts;
 
@@ -30,7 +31,7 @@ public static class MissionEndpoints
             {
                 return Problems.SwarmUnavailable(ex);
             }
-        });
+        }).WithIdempotency();
 
         group.MapGet("/{id:guid}", async (Guid id, MissionService missions, CancellationToken ct) =>
         {
@@ -58,7 +59,7 @@ public static class MissionEndpoints
             {
                 return Problems.SwarmUnavailable(ex);
             }
-        });
+        }).WithIdempotency();
 
         return group;
     }

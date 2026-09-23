@@ -187,6 +187,38 @@ jobs:
       - name: pytest
         run: pytest -v
 
+  e2e:
+    name: Dashboard end-to-end (Playwright, Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "8.0.x"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      # Pinned to the version the suite was written against; `install --with-deps`
+      # fetches the Chromium build that version expects, and its system libraries.
+      - name: Install Playwright and Chromium
+        run: |
+          pip install "playwright==1.63.0" pytest
+          python -m playwright install --with-deps chromium
+
+      # Built here so a compile error fails this step, not the fixture's 180 s startup wait.
+      - name: Build SwarmApi.Api
+        run: dotnet build backend/src/SwarmApi.Api
+
+      - name: Dashboard flows (starts the API with the simulated swarm, Open auth)
+        run: pytest e2e -v
+
+      - name: API log
+        if: failure()
+        run: cat e2e/api.log || true
+
   docker-lint:
     name: Dockerfile lint (hadolint)
     runs-on: ubuntu-latest

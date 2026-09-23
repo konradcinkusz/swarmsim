@@ -34,7 +34,8 @@ APIs as the integration point for a future natural-language mission layer. See t
 
 ```
 SwarmApi.Api            → transport only: bind, validate, delegate (P9)
-  SwarmApi.Application   → use cases (MissionService: validate, dispatch, abort, land, lifecycle)
+  SwarmApi.Application   → use cases (MissionService: validate, dispatch, abort, land, lifecycle;
+                           MissionPlanService: plan, preview, approve, dispatch with the code)
     SwarmApi.Domain      → entities, value objects, pure trajectory/formation math
     SwarmApi.Infrastructure → ISwarmBridge: RosBridgeSwarmBridge (real) / SimulatedSwarmBridge (P8 fallback)
 ```
@@ -53,6 +54,22 @@ them: YAML scenarios (`contracts/scenario/`) flown in a seeded kinematic simulat
 against the swarm's own modules, through the same rosbridge contract, with a mutation
 check that proves each scenario would notice a regression. It runs on every push and,
 as the root `action.yml`, inside anyone's CI.
+
+## Agents and the write gate
+
+An agent reaches the swarm through `mcp_server/` — and only as far as
+[ADR-0009](../adr/0009-agent-write-gate.md) lets it:
+
+1. It proposes a plan, which is checked for conflicts before anything flies.
+2. A person approves the plan and receives a single-use code.
+3. The agent dispatches with that code.
+
+The API enforces each step; the MCP server has no tool that approves, and no tool that
+flies without the code. [API-SURFACE.md](API-SURFACE.md) classifies every endpoint and
+[`mcp_server/BEHAVIOUR.md`](https://github.com/konradcinkusz/swarmsim/blob/main/mcp_server/BEHAVIOUR.md)
+every tool; tests read both tables. Every write honours a client-supplied
+`Idempotency-Key`, so a retry after a timeout replays the first answer instead of flying
+twice.
 
 ## Compliance checklist
 
@@ -83,9 +100,9 @@ Last worked through: 2026-09-22.
 | 14 | Outbound `HttpClient`s carry the standard resilience handler with explicit timeouts | N/A | The API makes no outbound HTTP call; its one outbound connection is the rosbridge WebSocket, which has an explicit connect timeout, a doubling reconnect back-off and a message size cap (`RosBridge:*`) |
 | 15 | `Program.cs` is a manifest; wiring in `ServiceCollectionExtensions` | Yes | `Program.cs` is capability calls; bridge and auth decisions live in `SwarmApi.Infrastructure/ServiceCollectionExtensions.cs` |
 | 16 | Extension points are interfaces registered in DI, not base classes | Yes | `ISwarmBridge` (two implementations, no base class) |
-| 17 | Has a test project; the logic-bearing layer is covered | Yes | `SwarmApi.Domain.Tests`, `SwarmApi.Application.Tests` (mission lifecycle), `SwarmApi.Infrastructure.Tests` (the rosbridge protocol against `contracts/rosbridge/`, the bridge against an in-process rosbridge), `SwarmApi.Api.Tests` (host-level, including Enforced auth) |
+| 17 | Has a test project; the logic-bearing layer is covered | Yes | `SwarmApi.Domain.Tests` (including deconfliction), `SwarmApi.Application.Tests` (mission lifecycle, the plan and approval gate), `SwarmApi.Infrastructure.Tests` (the rosbridge protocol against `contracts/rosbridge/`, the bridge against an in-process rosbridge), `SwarmApi.Api.Tests` (host-level, including Enforced auth, idempotency, and every endpoint against [API-SURFACE.md](API-SURFACE.md)); the dashboard in a real browser (`e2e/`, Playwright, in CI) |
 | 18 | Built by the tag-driven workflow with path-based change detection | Deviation | P12 row |
-| 19 | Architectural decisions recorded in `docs/` | Yes | Eight ADRs in [`docs/adr/`](https://github.com/konradcinkusz/swarmsim/tree/main/docs/adr), amended in place (dated) when the code moves on |
+| 19 | Architectural decisions recorded in `docs/` | Yes | Nine ADRs in [`docs/adr/`](https://github.com/konradcinkusz/swarmsim/tree/main/docs/adr), amended in place (dated) when the code moves on |
 
 The repository baseline (architecture-standards `REPO-BASELINE.md`) is met for CODEOWNERS,
 grouped dependency updates, `.editorconfig`, central package management, PR/issue

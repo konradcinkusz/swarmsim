@@ -116,3 +116,17 @@ correctness over the badge.
   because `ConfigureAppConfiguration` in `WebApplicationFactory` is applied after
   `Program.cs` reads `Auth:Authority`; `UseSetting` is applied before it, which is what the
   new tests use.
+
+## Amendment — 2026-09-22: `start_mission` is gone; agents go through a plan and a person
+
+[ADR-0009](0009-agent-write-gate.md) replaces decision 1's `start_mission` tool, which let
+an agent start a mission with no person deciding. An agent now proposes a plan
+(`plan_mission`). A person approves it and gets a single-use code. The mission flies only
+through `dispatch_mission` with that code. The MCP server also gained `get_mission`,
+`get_mission_plan`, `abort_mission` and `land_all`. It carries an `Idempotency-Key` on
+every write and was rebuilt on MCP SDK 2.x — the 1.x `FastMCP` import no longer exists.
+
+Decision 3 is out of date since deny-by-default (2026-09-22): in Enforced mode every write
+needs a token, the new plan, approval and dispatch endpoints included; reads stay open.
+[`docs/architecture/API-SURFACE.md`](../architecture/API-SURFACE.md) is now the
+normative, tested list of what is gated.

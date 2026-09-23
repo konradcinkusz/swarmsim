@@ -1,3 +1,4 @@
+using SwarmApi.Api.Idempotency;
 using SwarmApi.Application;
 using SwarmApi.Application.Contracts;
 
@@ -25,7 +26,7 @@ public static class SwarmEndpoints
             {
                 return Problems.SwarmUnavailable(ex);
             }
-        });
+        }).WithIdempotency();
 
         return group;
     }

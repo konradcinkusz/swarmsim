@@ -104,6 +104,26 @@ public class EnforcedAuthEndpointTests
     }
 
     [Fact]
+    public async Task The_plan_gate_needs_a_token_to_propose_decide_or_dispatch_and_none_to_read()
+    {
+        using var factory = Factory("https://authservice.invalid");
+        var client = factory.CreateClient();
+        var plan = Guid.NewGuid();
+
+        HttpStatusCode[] writes =
+        [
+            (await client.PostAsJsonAsync("/api/mission-plans", ValidRequest())).StatusCode,
+            (await client.PostAsync($"/api/mission-plans/{plan}/approve", null)).StatusCode,
+            (await client.PostAsync($"/api/mission-plans/{plan}/reject", null)).StatusCode,
+            (await client.PostAsJsonAsync($"/api/mission-plans/{plan}/dispatch", new DispatchPlanRequest("x"))).StatusCode,
+        ];
+
+        Assert.All(writes, status => Assert.Equal(HttpStatusCode.Unauthorized, status));
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/mission-plans")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/mission-plans/{plan}")).StatusCode);
+    }
+
+    [Fact]
     public async Task An_endpoint_nobody_opened_is_protected()
     {
         using var factory = Factory("https://authservice.invalid");

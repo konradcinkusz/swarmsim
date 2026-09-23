@@ -36,6 +36,28 @@
       <p id="empty-state" hidden>No drones yet — dispatch a mission below or via <code>POST /api/missions</code>.</p>
     </section>
 
+    <section class="panel" aria-labelledby="mission-heading">
+      <h2 id="mission-heading">Active mission</h2>
+      <p id="active-mission" role="status">No mission is flying.</p>
+      <div class="controls">
+        <button id="abort-btn" type="button" class="danger" disabled>Abort mission (return to launch)</button>
+        <button id="land-all-btn" type="button" class="danger">Land all drones now</button>
+      </div>
+      <p id="stop-status" role="status"></p>
+    </section>
+
+    <section class="panel" aria-labelledby="plans-heading">
+      <h2 id="plans-heading">Mission plans</h2>
+      <p>
+        Plans proposed by an agent (MCP <code>plan_mission</code>) or through
+        <code>POST /api/mission-plans</code>. Nothing flies until a person approves a plan here:
+        approving shows a single-use approval code — give it to the agent, or dispatch the
+        plan yourself. A plan whose drones would come too close cannot be approved.
+      </p>
+      <div id="plans"></div>
+      <p id="no-plans">No plans waiting.</p>
+    </section>
+
     <section class="panel">
       <h2>Dispatch a demo mission</h2>
       <p>

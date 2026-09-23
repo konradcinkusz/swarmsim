@@ -23,6 +23,20 @@ public static class MissionFactory
         Status = MissionStatus.Active,
     };
 
+    /// <summary>A planned mission as it takes off: same id and route, dispatched now.</summary>
+    public static Mission Launch(Mission planned, DateTimeOffset now) => new()
+    {
+        Id = planned.Id,
+        Name = planned.Name,
+        Type = planned.Type,
+        Formation = planned.Formation,
+        Waypoints = planned.Waypoints,
+        DroneCount = planned.DroneCount,
+        SpacingMeters = planned.SpacingMeters,
+        CreatedAtUtc = now,
+        Status = MissionStatus.Active,
+    };
+
     /// <summary>Maps the abort body's action to a swarm command; unknown values are a validation error.</summary>
     public static SwarmCommand AbortCommand(AbortMissionRequest? request) => request?.Action switch
     {

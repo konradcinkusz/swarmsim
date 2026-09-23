@@ -38,6 +38,7 @@ app.UseAuthorization();
 
 app.MapDefaultEndpoints();
 app.MapMissionEndpoints();
+app.MapMissionPlanEndpoints();
 app.MapSwarmEndpoints();
 
 app.Run();
