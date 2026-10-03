@@ -19,7 +19,7 @@ swarm_coordination/
 ├── commands.py          # rtl/land/hold → the PX4 flight mode that carries it out
 ├── drone_controller.py  # DroneController: everything one drone decides, per tick
 ├── mission_planning.py  # the /swarm/mission and /swarm/command payloads → a plan
-├── supervisor.py        # MissionSupervisor: who flies what; the battery policy
+├── supervisor.py        # MissionSupervisor: who flies what (a planner may decide); the battery policy
 ├── swarm_state.py       # per-drone readings → the /swarm/state payload
 ├── scenarios/           # the scenario instrument: L0 simulator, SUT protocol, runner, mutants
 └── nodes/               # thin rclpy adapters over the modules above
@@ -48,8 +48,10 @@ smoke run until 2026-09-22.
    any whose battery is already below the threshold (20 %). A waypoint mission gives
    each drone its own copy of the route, offset sideways by the formation spacing; a
    formation mission gives the first of them the route and every other one a slot
-   relative to it. Each drone gets its task on `/<drone>/mission/assignment` or
-   `/<drone>/mission/slot`; the active mission is latched on `/swarm/active_mission`.
+   relative to it (a `planner` handed to the supervisor can choose the drones and the roles
+   from where they are; the node hands it none). Each drone gets its task on
+   `/<drone>/mission/assignment` or `/<drone>/mission/slot`; the active mission is latched
+   on `/swarm/active_mission`.
    A mission that needs more fit drones than are running is rejected and logged.
    While it flies, a drone whose battery drops below the threshold hands the rest of
    its task to an idle drone and is sent home (`rtl`); with nobody idle, it is sent home

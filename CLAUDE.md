@@ -56,7 +56,10 @@ reasoning; check there before assuming a gap is accidental.
   `scenarios/` fly the same modules in L0 (`swarm_coordination/scenarios/`, ADR-0008).
   Run them with `--mutants`. A new behaviour needs a scenario that fails without it and
   a mutant in `scenarios/mutants.py` that proves so; a policy lives in product code
-  (`supervisor.py`, `drone_controller.py`), never only inside a scenario. A known gap is
+  (`supervisor.py`, `drone_controller.py`), never only inside a scenario. A swarm that plans
+  its own way, who flies and who leads from where the drones are, plugs a
+  `supervisor.Planner` in (`ReferenceSwarm(planner=...)`, ADR-0008) and does not rewrite the
+  supervisor's plan from a subclass. A known gap is
   written down as `expect: fail` with a reason, not deleted — in the scenario file when it
   is the reference swarm's, and in the swarm's own `--expect` file
   (`contracts/scenario/expectations.v1.schema.json`) when it is another's.

@@ -135,3 +135,30 @@ one.
   plausible is the swarm author's judgement, as it was for this repository's eight. The check
   makes each one answer to a scenario, and each scenario to a mutant.
 
+## Amendment — 2026-10-03 (later still): planning is a seam
+
+A swarm that plans differently from the reference had to rewrite the supervisor's private
+plan after `start()` and override its private `_hand_over()` (finding F8 of swarmsim-lab).
+`MissionSupervisor` now takes a `planner`: given the mission, the drones fit to fly it and
+where those have reported they are, it returns the `MissionPlan`. `observe_position` is how
+the supervisor learns where they are, and the L0 ground software feeds it from the telemetry
+it already receives. `ReferenceSwarm(planner=...)` is the seam for a swarm under test.
+
+- With no planner nothing changes: the lowest ids fly and the lowest id leads.
+- The supervisor checks what the planner returns, because the plan drives actions and later
+  hand-overs: the mission's id, exactly `drone_count` drones, all of them offered, no drone
+  both flying a path and following, every leader flying a path, no empty path. A plan that
+  fails a check, or a planner that raises, rejects the mission with the reason, as a
+  mission that too few drones can fly is rejected, and the mission in flight flies on.
+- The planner is offered every drone fit to fly and the positions reported so far, which may
+  lack some. What to do about a drone it knows nothing about, plan as the default does or not,
+  is the planner's decision.
+- A hand-over after a low battery is still the supervisor's: the replacement takes the place
+  of the drone going home. A swarm whose planner chooses roles from positions may want to
+  re-plan there too, which is a second seam and not built here.
+- The ROS dispatcher node builds no planner, so on a drone it changes nothing. Letting it
+  load one by name (finding F6) is the step from L0 to SITL.
+
+The lab's start-time planning, written as a planner and run beside its own subclass over 23
+scenarios and 3 seeds, gave 69 identical traces.
+
