@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/konradcinkusz/swarmsim/contracts/scenario/expectations.v1.schema.json",
+  "title": "swarmsim scenario expectations (v1)",
+  "description": "What one swarm under test is expected to fail. A scenario file's own expect describes this repository's reference swarm; another swarm has other known limitations, and may have fixed the reference's. They are written down next to that swarm and passed to the runner (--expect, the action's expect input). With an expectations file the scenario files' own expect is ignored: a scenario named here must fail, every other scenario must pass.",
+  "type": "object",
+  "required": [
+    "version"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "expect_fail": {
+      "description": "Scenario name -> why this swarm is expected to fail it. A known limitation, written down: if the swarm starts passing the scenario, the runner reports xpass and fails the suite. A name that matches no scenario in the run is reported and ignored.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9_]+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

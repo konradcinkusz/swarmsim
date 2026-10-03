@@ -1,0 +1,10 @@
+# The scenarios a swarm other than this repository's reference swarm is expected to fail,
+# and why — for `--expect` (the scenario action's `expect` input). With this file the
+# scenario files' own `expect` is ignored: the scenarios named here must fail, every other
+# scenario must pass. The swarm in this example chooses a formation's leader from where
+# the drones stand.
+version: 1
+expect_fail:
+  follower_jammed_goes_home: >
+    The scenario jams drone_2 and drone_3 by name and expects them to be followers. This
+    swarm picks its leader from where the drones stand, so one of them can be the leader.

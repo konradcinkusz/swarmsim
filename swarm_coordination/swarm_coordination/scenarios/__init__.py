@@ -14,6 +14,7 @@ The mutation check (``mutants.py``) runs every scenario against deliberately bro
 swarms: a scenario no mutant fails is reported as toothless.
 """
 
+from .expectations import Expectations, load_expectations, parse_expectations
 from .harness import run_scenario
 from .model import AssertionOutcome, Frame, Trace, Verdict, Violation
 from .runner import SuiteReport, run_suite
@@ -22,6 +23,7 @@ from .sut import ReferenceSwarm, SystemUnderTest
 
 __all__ = [
     "AssertionOutcome",
+    "Expectations",
     "Frame",
     "ReferenceSwarm",
     "ScenarioError",
@@ -31,7 +33,9 @@ __all__ = [
     "Trace",
     "Verdict",
     "Violation",
+    "load_expectations",
     "load_scenario",
+    "parse_expectations",
     "parse_scenario",
     "run_scenario",
     "run_suite",

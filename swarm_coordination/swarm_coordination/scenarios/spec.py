@@ -69,36 +69,43 @@ def _vector(values) -> Vector3:
     return Vector3(float(values[0]), float(values[1]), float(values[2]))
 
 
-def schema_text() -> str:
-    """The scenario schema, from the copy in this package.
+def schema_text(name: str = SCHEMA_NAME) -> str:
+    """A schema of the scenario contracts, from the copy in this package.
 
-    contracts/scenario/ is the source of truth, and a test fails when this copy differs
+    contracts/scenario/ is the source of truth, and a test fails when a copy differs
     from it. Reading it through ``importlib.resources`` works from a source tree, a wheel
     and a zipped egg alike; the old ``parents[3]`` walk only worked from a checkout.
     """
-    return resources.files(__package__).joinpath(SCHEMA_NAME).read_text(encoding="utf-8")
+    return resources.files(__package__).joinpath(name).read_text(encoding="utf-8")
 
 
-def _validator():
+def _validator(schema_name: str = SCHEMA_NAME):
     try:
         from jsonschema import Draft202012Validator
     except ImportError:  # pragma: no cover - exercised only without the dependency
         raise ScenarioError(
             "validating scenarios needs the jsonschema package: pip install jsonschema pyyaml"
         ) from None
-    return Draft202012Validator(json.loads(schema_text()))
+    return Draft202012Validator(json.loads(schema_text(schema_name)))
 
 
-def parse_scenario(document: dict, source: str | None = None) -> ScenarioSpec:
-    """Validates ``document`` against the schema and builds the spec, or raises ScenarioError."""
-    errors = sorted(_validator().iter_errors(document), key=lambda e: list(e.absolute_path))
+def check_against_schema(document: object, where: str, schema_name: str = SCHEMA_NAME) -> None:
+    """Returns when ``document`` is what the schema allows; else raises ScenarioError naming
+    ``where`` and the first few faults, each with the path to it."""
+    errors = sorted(
+        _validator(schema_name).iter_errors(document), key=lambda e: list(e.absolute_path)
+    )
     if errors:
-        where = source or document.get("name", "scenario")
         details = "; ".join(
             f"{'/'.join(str(p) for p in e.absolute_path) or '(root)'}: {e.message}"
             for e in errors[:5]
         )
         raise ScenarioError(f"{where}: {details}")
+
+
+def parse_scenario(document: dict, source: str | None = None) -> ScenarioSpec:
+    """Validates ``document`` against the schema and builds the spec, or raises ScenarioError."""
+    check_against_schema(document, source or document.get("name", "scenario"))
 
     world = document.get("world", {})
     wind = world.get("wind", {})
@@ -165,7 +172,8 @@ def _drones_named(kind: str, data) -> list[str]:
     return []
 
 
-def load_scenario(path: str | Path) -> ScenarioSpec:
+def read_mapping(path: str | Path, what: str) -> dict:
+    """The YAML mapping in ``path``; ``what`` ("a scenario file") names the kind for the error."""
     try:
         import yaml
     except ImportError:  # pragma: no cover - exercised only without the dependency
@@ -178,8 +186,12 @@ def load_scenario(path: str | Path) -> ScenarioSpec:
     except (OSError, yaml.YAMLError) as exc:
         raise ScenarioError(f"{path}: {exc}") from None
     if not isinstance(document, dict):
-        raise ScenarioError(f"{path}: a scenario file must hold a mapping")
-    return parse_scenario(document, source=str(path))
+        raise ScenarioError(f"{path}: {what} must hold a mapping")
+    return document
+
+
+def load_scenario(path: str | Path) -> ScenarioSpec:
+    return parse_scenario(read_mapping(path, "a scenario file"), source=str(path))
 
 
 def discover(paths: list[str | Path]) -> list[Path]:

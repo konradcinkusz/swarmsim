@@ -127,6 +127,7 @@ per-drone input is the `drone_<n>.env` file.
 | `sim.py` | L0: a seeded kinematic stand-in for PX4 SITL + Gazebo — PX4's OFFBOARD, arming, failsafe, RTL and auto-disarm rules; wind, GPS noise, battery, and nothing more |
 | `sut.py` | The system-under-test protocol, and `ReferenceSwarm`: the modules above, wired as the ROS nodes wire them |
 | `spec.py` | Scenario files, validated against `scenario.v1.schema.json` in this package: a copy of `contracts/scenario/scenario.v1.schema.json`, so the runner works from a pip install, kept identical by a test |
+| `expectations.py` | Which scenarios the swarm under test is expected to fail (`--expect`), validated against `expectations.v1.schema.json`; replaces the scenario files' own `expect`, which is the reference swarm's |
 | `harness.py` | `run_scenario(spec, sut, seed)` → verdict and trace; a lossy network between the drones |
 | `assertions.py` | Measurements over the trace: separation, completion, landing, battery, formation error... |
 | `mutants.py` | Broken versions of the reference swarm, for the mutation check |

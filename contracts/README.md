@@ -34,7 +34,12 @@ origin) — never a drone's own local frame, whose origin is wherever that drone
 | File | What it is | Written by | Read by |
 |---|---|---|---|
 | [`scenario.v1.schema.json`](scenario/scenario.v1.schema.json) | A scenario file (`scenarios/*.yaml`): world, timeline, assertions | people | the runner (`scenarios/spec.py`), through the copy the package ships so that it runs from an install; `test_scenario_spec.py` fails when the copy differs |
+| [`expectations.v1.schema.json`](scenario/expectations.v1.schema.json) | What one swarm under test is expected to fail, a reason each (`--expect`): it replaces the scenario files' own `expect`, which describes the reference swarm | people, next to the swarm | the runner (`scenarios/expectations.py`), through a packaged copy that `test_scenario_spec.py` keeps identical, like the scenario schema's |
 | [`report.v1.schema.json`](scenario/report.v1.schema.json) | A suite report: every scenario's outcome, every seed's measured assertions, the mutation check | the runner (`runner.to_json`, `--json`, `--upload`) | `SwarmApi.Api`'s run store (`POST /api/scenario-runs`, docs/adr/0011) |
+
+[`scenario/examples/expectations.yaml`](scenario/examples/expectations.yaml) is validated
+against its schema by `test_scenario_expectations.py`, which also checks that the scenario it
+names exists.
 
 [`scenario/examples/report.json`](scenario/examples/report.json) is a real report, not a
 hand-written one. `test_scenario_runner.py` fails when the runner no longer writes it (wall
