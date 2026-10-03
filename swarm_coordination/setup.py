@@ -9,6 +9,9 @@ setup(
     name=package_name,
     version="0.1.0",
     packages=find_packages(exclude=["test"]),
+    # The scenario runner reads its schema from the package (scenarios/spec.py): without
+    # this line a pip install has the code and not the schema.
+    package_data={"swarm_coordination.scenarios": ["scenario.v1.schema.json"]},
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
         (f"share/{package_name}", ["package.xml"]),

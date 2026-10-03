@@ -1,5 +1,8 @@
 """Scenario files: YAML, validated against contracts/scenario/scenario.v1.schema.json.
 
+The schema is read from a copy that ships inside this package (``schema_text``), so the
+runner works from a pip install in any directory, not only from a checkout.
+
 A scenario is data, not code: the world (wind, GPS noise, battery), a timeline of events
 (missions, operator commands, injected faults) and the assertions to hold the swarm to.
 Writing one needs no Python, and a malformed one is refused with the schema's reason
@@ -11,14 +14,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from importlib import resources
 from pathlib import Path
 
 from ..trajectory import Vector3
 from .sim import VehicleLimits, WorldConfig
 
-SCHEMA_PATH = (
-    Path(__file__).resolve().parents[3] / "contracts" / "scenario" / "scenario.v1.schema.json"
-)
+SCHEMA_NAME = "scenario.v1.schema.json"
 PAD_SPACING_M = 3.0  # simulation/px4-configs: drone_n spawns at (0, 3 * (n - 1), 0)
 
 
@@ -67,6 +69,16 @@ def _vector(values) -> Vector3:
     return Vector3(float(values[0]), float(values[1]), float(values[2]))
 
 
+def schema_text() -> str:
+    """The scenario schema, from the copy in this package.
+
+    contracts/scenario/ is the source of truth, and a test fails when this copy differs
+    from it. Reading it through ``importlib.resources`` works from a source tree, a wheel
+    and a zipped egg alike; the old ``parents[3]`` walk only worked from a checkout.
+    """
+    return resources.files(__package__).joinpath(SCHEMA_NAME).read_text(encoding="utf-8")
+
+
 def _validator():
     try:
         from jsonschema import Draft202012Validator
@@ -74,7 +86,7 @@ def _validator():
         raise ScenarioError(
             "validating scenarios needs the jsonschema package: pip install jsonschema pyyaml"
         ) from None
-    return Draft202012Validator(json.loads(SCHEMA_PATH.read_text(encoding="utf-8")))
+    return Draft202012Validator(json.loads(schema_text()))
 
 
 def parse_scenario(document: dict, source: str | None = None) -> ScenarioSpec:
