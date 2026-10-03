@@ -1,0 +1,10 @@
+# The reference swarm's known failures among the fixture and swarmsim's own scenarios: the
+# fixture that fails by design, and the V launched from the pads. CI flies the fixtures
+# together with swarmsim's scenarios (the action's include-swarmsim-scenarios) under this
+# file, as the caller of a swarm that fails exactly these would.
+version: 1
+expect_fail:
+  impossible_deadline: >
+    No swarm flies a 20 m route in 5 s; the scenario is a fixture for the failure path.
+  v_formation_from_pads: >
+    The reference swarm assigns formation slots without looking at where the drones start.
