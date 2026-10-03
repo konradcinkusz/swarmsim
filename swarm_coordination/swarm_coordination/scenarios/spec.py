@@ -141,6 +141,11 @@ def parse_scenario(document: dict, source: str | None = None) -> ScenarioSpec:
         drone = params.get("drone") or params.get("leader")
         if drone is not None and int(drone.rsplit("_", 1)[1]) > drone_count:
             raise ScenarioError(f"{source or document['name']}: {drone} does not exist")
+        if kind == "travel_after" and not any(e.kind == params["event"] for e in events):
+            raise ScenarioError(
+                f"{source or document['name']}: travel_after names the event '{params['event']}', "
+                "which the scenario does not have"
+            )
         assertions.append(AssertionSpec(kind, dict(params)))
 
     if document.get("expect") == "fail" and not document.get("expect_reason"):

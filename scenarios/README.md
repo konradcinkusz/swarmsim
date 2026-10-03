@@ -77,15 +77,24 @@ A `mission` is dispatched exactly as the API dispatches it (`contracts/rosbridge
 | `no_task_below_battery: {threshold_pct, grace_s?}` | no drone keeps flying under the swarm's control (OFFBOARD) for more than `grace_s` (default 3) once its battery is below the threshold | longest time it did |
 | `reaches: {drone, position, tolerance_m, by_s, from_s?}` | the drone comes within `tolerance_m` of `position` between `from_s` and `by_s` | when |
 | `final_position: {drone, position, tolerance_m}` | the drone ends the run within `tolerance_m` of `position` | the distance |
+| `travel_after: {event, max_m, drone?, to_s?}` | no drone that was airborne when the scenario's (last) `event` of that kind (`mission`, `command`, `battery`, `comms_loss`) happened strays more than `max_m`, horizontally, from where it was then, until `to_s` (default: the end of the run); `drone` checks that drone only; it fails if no drone was airborne then, because nothing was measured | the furthest any drone got |
 | `formation_error: {max_m, leader?, from_s?, to_s?}` | the drones fit the last formation mission's shape within `max_m`: in every frame where exactly `drone_count` drones fly under offboard control, some drone is the apex and the others are matched to the slots around it (its true position + the formation's offsets), the largest distance of any drone from its slot as small as it can be. Who leads and who takes which slot is the swarm's choice, so the reference swarm's roles are not assumed; `leader` pins the apex. A window with no such frame fails, because nothing was measured | the largest error of the closest fit |
 | `never_mode: {drone, mode}` | the drone's autopilot never enters `mode` | when it did |
 
 Every violation carries the time it was measured at and the value against the threshold —
 the numbers come from the trace, never from the scenario file.
 
-**A distance check that measured nothing fails.** `min_separation` and `formation_error`
-are violations, not passes, when their window held nothing to measure: a window typed a few
-seconds after the swarm landed would otherwise pass for any swarm. The violation says when
+**Assert what the scenario is for, not where the reference ended up.** `final_position` fits
+an end that does not depend on speed, such as the end of a route the drone completes. "Stop
+where you are" is not one: the position the reference stopped at is the reference's speed, 16 m
+into a route at 2 m/s, and a swarm that flies faster is further along when the command arrives
+and stops there. `travel_after` asks what the scenario is about, how far the drone went after
+the command. Every scenario should hold an assertion only a flying swarm can meet, so that a
+swarm that does nothing cannot pass it (`test_no_scenario_passes_for_a_swarm_that_never_leaves_the_ground`).
+
+**A distance check that measured nothing fails.** `min_separation`, `formation_error` and
+`travel_after` are violations, not passes, when their window held nothing to measure: a
+window typed a few seconds after the swarm landed would otherwise pass for any swarm. The violation says when
 the formation did fly, so the window can be fixed from the report. `never_mode` and
 `no_task_below_battery` claim an absence, so for them nothing happening is the pass.
 

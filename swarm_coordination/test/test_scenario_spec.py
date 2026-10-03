@@ -96,6 +96,9 @@ def test_events_are_run_in_time_order_whatever_order_they_are_written_in():
         (_with(events=[{"at_s": 1, "command": "dance"}]), "events/0"),
         (_with(events=[{"at_s": 1, "command": "land", "mission": {}}]), "events/0"),
         (_with(surprise=True), "surprise"),
+        (_with(assertions=[{"travel_after": {"event": "wind", "max_m": 3}}]), "travel_after"),
+        (_with(assertions=[{"travel_after": {"event": "command", "max_m": 0}}]), "max_m"),
+        (_with(assertions=[{"travel_after": {"max_m": 3}}]), "event"),
     ],
 )
 def test_the_schema_refuses_malformed_scenarios_and_says_where(document, complaint):
@@ -108,6 +111,18 @@ def test_a_drone_the_scenario_does_not_have_is_refused():
 
     with pytest.raises(ScenarioError, match="drone_9 does not exist"):
         parse_scenario(document)
+
+
+def test_travel_after_must_name_an_event_the_scenario_has():
+    wrong = _with(assertions=[{"travel_after": {"event": "command", "max_m": 3}}])
+    right = _with(
+        events=[*MINIMAL["events"], {"at_s": 15, "command": "land"}],
+        assertions=[{"travel_after": {"event": "command", "max_m": 3}}],
+    )
+
+    with pytest.raises(ScenarioError, match="travel_after names the event 'command'"):
+        parse_scenario(wrong)
+    assert parse_scenario(right).assertions[0].kind == "travel_after"
 
 
 def test_a_mission_needing_more_drones_than_the_scenario_has_is_refused():

@@ -6,17 +6,18 @@ and returns a headline measurement plus a violation for every breach, stamped wi
 time it happened. Adding an assertion is a function here and a property in
 contracts/scenario/scenario.v1.schema.json.
 
-An assertion that claims a *distance* (``min_separation``, ``formation_error``) must have
-measured it: a window in which nothing qualified to be measured is a violation, not a
-pass. Otherwise a window typed a few seconds too late, or a swarm that never flew, makes
-the check succeed having looked at nothing. (``never_mode`` and ``no_task_below_battery``
-claim an absence, so for them "nothing happened" is the pass.)
+An assertion that claims a *distance* (``min_separation``, ``formation_error``,
+``travel_after``) must have measured it: a window in which nothing qualified to be measured
+is a violation, not a pass. Otherwise a window typed a few seconds too late, or a swarm that
+never flew, makes the check succeed having looked at nothing. (``never_mode`` and
+``no_task_below_battery`` claim an absence, so for them "nothing happened" is the pass.)
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from itertools import combinations
+from math import hypot
 
 from ..mission_planning import FORMATIONS
 from ..trajectory import Vector3
@@ -325,6 +326,68 @@ def formation_error(spec: ScenarioSpec, trace: Trace, params: dict) -> Assertion
     return _outcome("formation_error", round(fit.error_m, 3), "m", violations)
 
 
+def travel_after(spec: ScenarioSpec, trace: Trace, params: dict) -> AssertionOutcome:
+    """No drone strays more than ``max_m`` from where it was when the event happened.
+
+    "Stop where you are" is a claim about the distance travelled since the event. An absolute
+    ``final_position`` makes it too, but only for a swarm that flies as fast as the one the
+    number was read from: a faster swarm is further along its route when the command arrives,
+    and stops there. The drones checked are those airborne when the (last) event of that kind
+    happens, or the one named by ``drone``. The distance is horizontal, from where the drone
+    was then to the furthest it got, until ``to_s`` (default: the end of the run).
+    """
+    limit = float(params["max_m"])
+    kind = params["event"]
+    named = params.get("drone")
+    times = [e.at_s for e in spec.events if e.kind == kind]
+    if not times:
+        violation = Violation(
+            "travel_after", (), None, None, limit, f"the scenario has no {kind} event"
+        )
+        return _outcome("travel_after", None, "m", [violation])
+    at = max(times)
+    after = [f for f in trace.frames if at <= f.t_s <= float(params.get("to_s", float("inf")))]
+    airborne = (
+        [s for s in after[0].drones if s.airborne and named in (None, s.drone_id)] if after else []
+    )
+    if not airborne:
+        who = "no drone was" if named is None else f"{named} was not"
+        violation = Violation(
+            "travel_after",
+            () if named is None else (named,),
+            at,
+            None,
+            limit,
+            f"{who} airborne at the {kind} (t={at:g} s), so the distance it travelled "
+            "after it was not measured",
+        )
+        return _outcome("travel_after", None, "m", [violation])
+
+    violations = []
+    furthest_of_all = 0.0
+    for start in airborne:
+        furthest, when = 0.0, after[0].t_s
+        for frame in after:
+            here = _sample(frame, start.drone_id).position
+            distance = hypot(here.x - start.position.x, here.y - start.position.y)
+            if distance > furthest:
+                furthest, when = distance, frame.t_s
+        furthest_of_all = max(furthest_of_all, furthest)
+        if furthest > limit:
+            violations.append(
+                Violation(
+                    "travel_after",
+                    (start.drone_id,),
+                    when,
+                    round(furthest, 3),
+                    limit,
+                    f"{start.drone_id} was {furthest:.2f} m from where it was at the {kind} "
+                    f"(t={at:g} s) by t={when:.1f} s (limit {limit:g} m)",
+                )
+            )
+    return _outcome("travel_after", round(furthest_of_all, 3), "m", violations)
+
+
 def never_mode(spec: ScenarioSpec, trace: Trace, params: dict) -> AssertionOutcome:
     drone_id = params["drone"]
     mode = params["mode"]
@@ -350,6 +413,7 @@ ASSERTIONS: dict[str, Callable[[ScenarioSpec, Trace, dict], AssertionOutcome]] =
     "reaches": reaches,
     "final_position": final_position,
     "formation_error": formation_error,
+    "travel_after": travel_after,
     "never_mode": never_mode,
 }
 

@@ -11,6 +11,7 @@ import pytest
 jsonschema = pytest.importorskip("jsonschema")
 pytest.importorskip("yaml")
 
+from swarm_coordination.drone_controller import DroneController  # noqa: E402
 from swarm_coordination.scenarios import runner  # noqa: E402
 from swarm_coordination.scenarios.__main__ import main  # noqa: E402
 from swarm_coordination.scenarios.expectations import (  # noqa: E402
@@ -20,7 +21,7 @@ from swarm_coordination.scenarios.expectations import (  # noqa: E402
 from swarm_coordination.scenarios.harness import mission_payload, run_scenario  # noqa: E402
 from swarm_coordination.scenarios.mutants import MUTANTS, Mutant  # noqa: E402
 from swarm_coordination.scenarios.spec import load_scenario, parse_scenario  # noqa: E402
-from swarm_coordination.scenarios.sut import ReferenceSwarm  # noqa: E402
+from swarm_coordination.scenarios.sut import ReferenceDrone, ReferenceSwarm  # noqa: E402
 from swarm_coordination.supervisor import MissionSupervisor  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -360,6 +361,57 @@ def test_the_repository_suite_passes_and_every_scenario_catches_a_mutant():
     assert {s.outcome for s in report.scenarios} <= {"passed", "xfail"}
     assert not report.survivors()
     assert len(report.mutants) == len(MUTANTS)
+
+
+class _FasterController(DroneController):
+    """The reference's controller asking for twice the step: a swarm that flies faster."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, max_step_m=4.0, **kwargs)
+
+
+class _GroundedDrone(ReferenceDrone):
+    def _receive(self, now_s, message) -> None:
+        pass  # takes no orders, so it never arms and never flies
+
+
+def test_a_swarm_that_flies_faster_is_not_failed_for_where_the_command_found_it():
+    spec = load_scenario(SCENARIOS / "operator_land_in_place.yaml")
+    faster = ReferenceSwarm(name="faster", controller_cls=_FasterController)
+
+    verdict, trace = run_scenario(spec, faster, seed=1)
+
+    landed_at = next(s for s in trace.frames[-1].drones if s.drone_id == "drone_1").position.x
+    assert verdict.passed
+    # It is twice as far along the route when "land" arrives, so it lands twice as far out.
+    # The absolute position this scenario used to pin, 16 m +- 6, would have failed a swarm
+    # for flying faster than the one the number was read from (finding F9).
+    assert abs(landed_at - 16.0) > 6.0
+
+
+def test_travel_after_fails_the_swarm_that_ignores_the_command():
+    spec = load_scenario(SCENARIOS / "operator_land_in_place.yaml")
+    deaf = next(m.sut for m in MUTANTS if m.name == "deaf_to_commands")
+
+    reference = {o.assertion: o for o in run_scenario(spec, ReferenceSwarm(), 1)[0].outcomes}
+    broken = {o.assertion: o for o in run_scenario(spec, deaf, 1)[0].outcomes}
+
+    assert reference["travel_after"].passed and reference["travel_after"].measured < 1
+    assert not broken["travel_after"].passed and broken["travel_after"].measured > 40
+
+
+def test_no_scenario_passes_for_a_swarm_that_never_leaves_the_ground():
+    """A scenario whose every assertion a grounded swarm meets would pass any swarm that
+    does nothing (finding F9). Each one here holds an assertion that only flying meets."""
+    grounded = ReferenceSwarm(name="grounded", drone_cls=_GroundedDrone)
+
+    passed = [
+        spec.name
+        for spec in map(load_scenario, sorted(SCENARIOS.glob("*.yaml")))
+        if run_scenario(spec, grounded, seed=1)[0].passed
+    ]
+
+    assert passed == []
 
 
 def test_junit_and_json_reports_describe_the_same_run(tmp_path):

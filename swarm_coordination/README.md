@@ -129,7 +129,7 @@ per-drone input is the `drone_<n>.env` file.
 | `spec.py` | Scenario files, validated against `scenario.v1.schema.json` in this package: a copy of `contracts/scenario/scenario.v1.schema.json`, so the runner works from a pip install, kept identical by a test |
 | `expectations.py` | Which scenarios the swarm under test is expected to fail (`--expect`), validated against `expectations.v1.schema.json`; replaces the scenario files' own `expect`, which is the reference swarm's |
 | `harness.py` | `run_scenario(spec, sut, seed)` → verdict and trace; a lossy network between the drones |
-| `assertions.py` | Measurements over the trace: separation, completion, landing, battery, formation error... |
+| `assertions.py` | Measurements over the trace: separation, completion, landing, battery, formation error, travel after an event... |
 | `mutants.py` | Broken versions of the reference swarm, for the mutation check; another swarm brings its own with `--mutants-from` |
 | `runner.py`, `__main__.py` | The suite, JUnit/JSON/Markdown reports, and `python -m swarm_coordination.scenarios` |
 
