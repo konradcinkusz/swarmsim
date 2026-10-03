@@ -38,6 +38,15 @@ inputs:
     description: "Scenario files or directories, space-separated, relative to the workspace."
     required: false
     default: "scenarios"
+  include-swarmsim-scenarios:
+    description: >-
+      "true": also fly swarmsim's own scenarios (the scenarios/ directory of this action,
+      at the version you pinned) against your swarm, with yours. Their `expect` describes
+      swarmsim's reference swarm, so give `expect` your swarm's own known limitations; it
+      then covers every scenario in the run, yours included. Your scenarios must not share
+      a name with them. Empty `scenarios` and "true": only swarmsim's.
+    required: false
+    default: "false"
   seeds:
     description: "How many seeds each scenario runs with; it passes only if every seed does."
     required: false
@@ -121,6 +130,7 @@ runs:
       env:
         ACTION_PATH: ${{ github.action_path }}
         SCENARIOS: ${{ inputs.scenarios }}
+        INCLUDE_SWARMSIM: ${{ inputs.include-swarmsim-scenarios }}
         SEEDS: ${{ inputs.seeds }}
         SEED: ${{ inputs.seed }}
         SUT: ${{ inputs.sut }}
@@ -134,6 +144,7 @@ runs:
       run: |
         set -euo pipefail
         read -r -a paths <<< "$SCENARIOS"
+        if [ "$INCLUDE_SWARMSIM" = "true" ]; then paths+=("$ACTION_PATH/scenarios"); fi
         args=(run "${paths[@]}" --seed "$SEED" --seeds "$SEEDS" --junit "$JUNIT")
         if [ "$SUMMARY" = "true" ]; then args+=(--markdown "$GITHUB_STEP_SUMMARY"); fi
         if [ -n "$SUT" ]; then args+=(--sut "$SUT"); fi

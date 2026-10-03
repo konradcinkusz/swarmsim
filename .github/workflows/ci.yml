@@ -144,6 +144,20 @@ jobs:
           junit-path: recorded-scenario-results.xml
           job-summary: "false"
 
+      # The caller's scenarios and swarmsim's own in one run, with the caller's expectations:
+      # the caller here is the fixtures directory and the swarm is the reference swarm, whose
+      # known failures are the fixture and the V from the pads.
+      - name: The caller's scenarios with swarmsim's (must pass)
+        id: both
+        uses: ./
+        with:
+          scenarios: swarm_coordination/test/fixtures/scenarios
+          include-swarmsim-scenarios: "true"
+          expect: swarm_coordination/test/fixtures/expectations/reference_gaps.yaml
+          seeds: "1"
+          junit-path: both-scenario-results.xml
+          job-summary: "false"
+
       - name: The action passed what it must pass and failed what it must fail
         env:
           SUITE_PASSED: ${{ steps.suite.outputs.passed }}
@@ -152,6 +166,7 @@ jobs:
           UNEXCUSED_OUTCOME: ${{ steps.unexcused.outcome }}
           UNEXCUSED_PASSED: ${{ steps.unexcused.outputs.passed }}
           RECORDED_PASSED: ${{ steps.recorded.outputs.passed }}
+          BOTH_PASSED: ${{ steps.both.outputs.passed }}
         run: |
           test "$SUITE_PASSED" = "true"
           test "$FAILING_OUTCOME" = "failure" \
@@ -164,6 +179,9 @@ jobs:
           grep -q 'failures="1"' unexcused-scenario-results.xml
           test "$RECORDED_PASSED" = "true"
           grep -q '<skipped' recorded-scenario-results.xml
+          test "$BOTH_PASSED" = "true"
+          grep -q 'scenarios.impossible_deadline' both-scenario-results.xml  # the caller's
+          grep -q 'scenarios.waypoint_lanes' both-scenario-results.xml  # swarmsim's
 
       - name: Upload scenario reports
         if: always()

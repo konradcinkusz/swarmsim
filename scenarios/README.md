@@ -141,7 +141,14 @@ service is called and nothing leaves the runner:
     seeds: "3"
     sut: my_swarm.adapter:MySwarm   # optional: your swarm, see scenarios/sut.py
     expect: my_swarm/expectations.yaml   # optional: what it is expected to fail
+    include-swarmsim-scenarios: "true"   # optional: swarmsim's own scenarios too
 ```
 
 It writes a JUnit report (`swarmsim-scenarios.xml`) and the Markdown table to the job
 summary, and fails the job when a scenario fails.
+
+`include-swarmsim-scenarios` flies this repository's own scenarios, at the version you
+pinned, against your swarm as well — they are the same ones, and their `expect` is the
+reference swarm's, so list your swarm's known failures in `expect`. That file then covers
+every scenario in the run, yours included, and scenario names are unique across the run, so
+yours must not reuse theirs. Set `scenarios` to nothing to fly only swarmsim's.
