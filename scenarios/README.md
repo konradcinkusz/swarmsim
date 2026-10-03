@@ -62,17 +62,23 @@ A `mission` is dispatched exactly as the API dispatches it (`contracts/rosbridge
 
 | Assertion | Holds when | Measures |
 |---|---|---|
-| `min_separation: {min_m, from_s?, to_s?}` | no two **airborne** drones are ever closer than `min_m` (true positions) | the closest approach |
+| `min_separation: {min_m, from_s?, to_s?}` | no two **airborne** drones are ever closer than `min_m` (true positions); it fails if fewer than two drones are airborne in the window, because nothing was measured | the closest approach |
 | `mission_completes: {within_s}` | the swarm reports the last dispatched mission complete within `within_s` of dispatch | time to complete |
 | `all_landed: {by_s}` | every drone is on the ground and disarmed at `by_s` | since when |
 | `no_task_below_battery: {threshold_pct, grace_s?}` | no drone keeps flying under the swarm's control (OFFBOARD) for more than `grace_s` (default 3) once its battery is below the threshold | longest time it did |
 | `reaches: {drone, position, tolerance_m, by_s, from_s?}` | the drone comes within `tolerance_m` of `position` between `from_s` and `by_s` | when |
 | `final_position: {drone, position, tolerance_m}` | the drone ends the run within `tolerance_m` of `position` | the distance |
-| `formation_error: {max_m, leader?, from_s?, to_s?}` | each follower stays within `max_m` of its slot (leader's true position + the offset the last formation mission gives it) while both fly the formation | the largest error |
+| `formation_error: {max_m, leader?, from_s?, to_s?}` | each follower stays within `max_m` of its slot (leader's true position + the offset the last formation mission gives it) while both fly the formation; a follower that never flies it in the window fails the check, because its error was not measured | the largest error |
 | `never_mode: {drone, mode}` | the drone's autopilot never enters `mode` | when it did |
 
 Every violation carries the time it was measured at and the value against the threshold —
 the numbers come from the trace, never from the scenario file.
+
+**A distance check that measured nothing fails.** `min_separation` and `formation_error`
+are violations, not passes, when their window held nothing to measure: a window typed a few
+seconds after the swarm landed would otherwise pass for any swarm. The violation says when
+the formation did fly, so the window can be fixed from the report. `never_mode` and
+`no_task_below_battery` claim an absence, so for them nothing happening is the pass.
 
 **Known limitations** are written down, not deleted: `expect: fail` with an
 `expect_reason` makes a scenario that must fail. If it starts passing, the runner reports

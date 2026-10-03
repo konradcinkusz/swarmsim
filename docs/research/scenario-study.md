@@ -51,6 +51,13 @@ runs took 3.2 s of wall time in total.
 | `scale_ten_lanes` | passed | closest approach 2.67–2.79 m; complete in 30–30.3 s | never_lands, no_frame_conversion |
 | `v_formation_from_pads` | **expected failure** | closest approach **0.48 m** | — |
 
+*Amended 2026-10-03.* In the run above `follower_comms_blip`'s `formation_error` measured
+nothing: it started at 40 s and the formation had landed at 37 s, so it passed whatever
+drone_3 did, and the `no_frame_conversion` mutant got through that scenario. The check now
+starts at 32 s, four seconds after contact returns, and measures a worst slot error of
+2.28 m. `no_frame_conversion` fails the scenario with it (6.47 m). The assertions were also
+changed to fail when they have nothing to measure (`scenarios/README.md`).
+
 ## Findings
 
 1. **A V formation launched from the pads is a near collision.** Every pad lies on one

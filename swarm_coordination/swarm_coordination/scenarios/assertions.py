@@ -5,6 +5,12 @@ autopilots were doing) and, for the mission, what the system under test *reporte
 and returns a headline measurement plus a violation for every breach, stamped with the
 time it happened. Adding an assertion is a function here and a property in
 contracts/scenario/scenario.v1.schema.json.
+
+An assertion that claims a *distance* (``min_separation``, ``formation_error``) must have
+measured it: a window in which nothing qualified to be measured is a violation, not a
+pass. Otherwise a window typed a few seconds too late, or a swarm that never flew, makes
+the check succeed having looked at nothing. (``never_mode`` and ``no_task_below_battery``
+claim an absence, so for them "nothing happened" is the pass.)
 """
 
 from __future__ import annotations
@@ -32,6 +38,19 @@ def _sample(frame: Frame, drone_id: str):
     return next(s for s in frame.drones if s.drone_id == drone_id)
 
 
+def _window_text(params: dict) -> str:
+    start = float(params.get("from_s", 0.0))
+    if "to_s" in params:
+        return f"between t={start:g} s and t={float(params['to_s']):g} s"
+    return f"from t={start:g} s on"
+
+
+def _flying(frame: Frame, drone_id: str):
+    """The drone's sample if it is airborne under offboard control in ``frame``, else None."""
+    sample = _sample(frame, drone_id)
+    return sample if sample.airborne and sample.mode == "OFFBOARD" else None
+
+
 def _outcome(kind: str, measured, unit: str, violations: list[Violation]) -> AssertionOutcome:
     return AssertionOutcome(kind, not violations, measured, unit, tuple(violations))
 
@@ -46,7 +65,18 @@ def min_separation(spec: ScenarioSpec, trace: Trace, params: dict) -> AssertionO
             key = (a.drone_id, b.drone_id)
             if key not in closest or distance < closest[key][0]:
                 closest[key] = (distance, frame.t_s)
-    measured = min((d for d, _ in closest.values()), default=None)
+    if not closest:
+        violation = Violation(
+            "min_separation",
+            (),
+            None,
+            None,
+            limit,
+            f"fewer than two drones were airborne {_window_text(params)}, "
+            "so no separation was measured",
+        )
+        return _outcome("min_separation", None, "m", [violation])
+    measured = min(d for d, _ in closest.values())
     violations = [
         Violation(
             "min_separation",
@@ -60,9 +90,7 @@ def min_separation(spec: ScenarioSpec, trace: Trace, params: dict) -> AssertionO
         for pair, (d, t) in sorted(closest.items(), key=lambda item: item[1][1])
         if d < limit
     ]
-    return _outcome(
-        "min_separation", None if measured is None else round(measured, 3), "m", violations
-    )
+    return _outcome("min_separation", round(measured, 3), "m", violations)
 
 
 def mission_completes(spec: ScenarioSpec, trace: Trace, params: dict) -> AssertionOutcome:
@@ -238,12 +266,12 @@ def formation_error(spec: ScenarioSpec, trace: Trace, params: dict) -> Assertion
 
     worst: dict[str, tuple[float, float]] = {}
     for frame in _window(trace, params):
-        lead = _sample(frame, leader)
-        if not lead.airborne or lead.mode != "OFFBOARD":
+        lead = _flying(frame, leader)
+        if lead is None:
             continue
         for follower, offset in zip(followers, offsets, strict=True):
-            sample = _sample(frame, follower)
-            if not sample.airborne or sample.mode != "OFFBOARD":
+            sample = _flying(frame, follower)
+            if sample is None:
                 continue
             error = sample.position.distance_to(lead.position + offset)
             if follower not in worst or error > worst[follower][0]:
@@ -262,6 +290,29 @@ def formation_error(spec: ScenarioSpec, trace: Trace, params: dict) -> Assertion
         for follower, (error, t) in sorted(worst.items())
         if error > limit
     ]
+    for follower in followers:
+        if follower in worst:
+            continue
+        # Say when the formation did fly, so the window can be fixed without a debugger.
+        times = [
+            f.t_s
+            for f in trace.frames
+            if _flying(f, leader) is not None and _flying(f, follower) is not None
+        ]
+        flew = "it never did in this run"
+        if times:
+            flew = f"it did so from t={times[0]:g} s to t={times[-1]:g} s"
+        violations.append(
+            Violation(
+                "formation_error",
+                (follower, leader),
+                None,
+                None,
+                limit,
+                f"{follower} was not flying its slot behind {leader} {_window_text(params)} "
+                f"({flew}), so its error was not measured",
+            )
+        )
     return _outcome(
         "formation_error", None if measured is None else round(measured, 3), "m", violations
     )

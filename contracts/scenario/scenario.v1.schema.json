@@ -242,7 +242,7 @@
       "additionalProperties": false,
       "properties": {
         "min_separation": {
-          "description": "No two airborne drones ever closer than min_m (truth, not reported positions).",
+          "description": "No two airborne drones ever closer than min_m (truth, not reported positions). Fails when fewer than two drones are airborne between from_s and to_s: nothing was measured.",
           "type": "object",
           "required": [
             "min_m"
@@ -359,7 +359,7 @@
           }
         },
         "formation_error": {
-          "description": "While airborne between from_s and to_s, every follower stays within max_m of its slot: the leader's true position plus the offset the (last) formation mission gives it.",
+          "description": "While airborne between from_s and to_s, every follower stays within max_m of its slot: the leader's true position plus the offset the (last) formation mission gives it. A follower that never flies the formation in the window fails: its error was not measured.",
           "type": "object",
           "required": [
             "max_m"

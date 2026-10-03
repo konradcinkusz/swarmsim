@@ -76,6 +76,20 @@ def test_a_state_report_mid_flight_matches_the_state_contract():
     )
 
 
+def test_follower_comms_blip_measures_the_recovered_formation_and_catches_a_wrong_frame():
+    """Its formation check started at 40 s, after the formation had landed (37 s). It
+    measured nothing, passed whatever drone_3 did, and let no_frame_conversion through."""
+    spec = load_scenario(SCENARIOS / "follower_comms_blip.yaml")
+
+    verdict, _ = run_scenario(spec, ReferenceSwarm(), 1)
+    outcome = next(o for o in verdict.outcomes if o.assertion == "formation_error")
+    assert outcome.passed and outcome.measured == pytest.approx(2.277, abs=0.01)
+
+    mutant = next(m for m in MUTANTS if m.name == "no_frame_conversion")
+    broken, _ = run_scenario(spec, mutant.sut, 1)
+    assert "formation_error" in {o.assertion for o in broken.outcomes if not o.passed}
+
+
 def test_a_comms_loss_cuts_messages_both_ways_for_its_duration_only():
     spec = load_scenario(SCENARIOS / "follower_comms_blip.yaml")
     heard = []

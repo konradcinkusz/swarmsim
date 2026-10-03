@@ -55,8 +55,9 @@ def test_min_separation_reports_the_closest_approach_of_each_pair_and_when():
 def test_min_separation_ignores_drones_on_the_ground_and_frames_outside_the_window():
     trace = _trace(
         [
+            _frame(1.0, _sample("drone_1", Vector3(0, 0, 5)), _sample("drone_2", Vector3(0, 3, 5))),
             _frame(
-                1.0, _sample("drone_1", Vector3(0, 0, 0)), _sample("drone_2", Vector3(0, 0.1, 5))
+                2.0, _sample("drone_1", Vector3(0, 0, 0)), _sample("drone_2", Vector3(0, 0.1, 5))
             ),
             _frame(
                 9.0, _sample("drone_1", Vector3(0, 0, 5)), _sample("drone_2", Vector3(0, 0.1, 5))
@@ -64,7 +65,28 @@ def test_min_separation_ignores_drones_on_the_ground_and_frames_outside_the_wind
         ]
     )
 
-    assert _check("min_separation", trace, min_m=1.0, to_s=5.0).passed
+    outcome = _check("min_separation", trace, min_m=1.0, to_s=5.0)
+
+    assert outcome.passed and outcome.measured == 3.0
+
+
+def test_min_separation_fails_when_nothing_was_close_enough_to_measure():
+    """Fewer than two airborne drones in the window: a pass would be a check that looked
+    at nothing, like a window typed after the swarm landed, or a swarm that never flew."""
+    trace = _trace(
+        [
+            _frame(1.0, _sample("drone_1", Vector3(0, 0, 0)), _sample("drone_2", Vector3(0, 3, 5))),
+            _frame(9.0, _sample("drone_1", Vector3(0, 0, 5)), _sample("drone_2", Vector3(0, 3, 5))),
+        ]
+    )
+
+    outcome = _check("min_separation", trace, min_m=1.0, to_s=5.0)
+
+    assert not outcome.passed and outcome.measured is None
+    (violation,) = outcome.violations
+    assert violation.drone_ids == () and violation.timestamp_s is None
+    assert "between t=0 s and t=5 s" in violation.description
+    assert "no separation was measured" in violation.description
 
 
 def test_mission_completes_measures_from_dispatch_to_the_first_complete_report():
@@ -196,6 +218,72 @@ def test_formation_error_compares_followers_with_the_leader_plus_their_slot():
     assert outcome.violations[0].timestamp_s == 11.0
 
 
+def _formation_trace(frames):
+    mission = {"type": "formation", "formation": "line", "drone_count": 2, "spacing_m": 3.0}
+    return _trace(frames, missions=[(1.0, MISSION, mission)])
+
+
+def test_formation_error_fails_when_the_formation_was_not_flying_in_the_window():
+    """follower_comms_blip once checked from 40 s, after the formation had landed (37 s)."""
+    trace = _formation_trace(
+        [
+            _frame(
+                t,
+                _sample("drone_1", Vector3(t, 0, 5)),
+                _sample("drone_2", Vector3(t - 3, 0, 5)),
+            )
+            for t in (10.0, 11.0, 12.0)
+        ]
+        + [
+            _frame(
+                t,
+                _sample("drone_1", Vector3(12, 0, 0), armed=False, mode="AUTO.LAND"),
+                _sample("drone_2", Vector3(9, 0, 0), armed=False, mode="AUTO.LAND"),
+            )
+            for t in (40.0, 41.0)
+        ]
+    )
+
+    assert _check("formation_error", trace, max_m=1.0, from_s=10.0).passed
+
+    outcome = _check("formation_error", trace, max_m=1.0, from_s=40.0)
+
+    assert not outcome.passed and outcome.measured is None
+    (violation,) = outcome.violations
+    assert violation.drone_ids == ("drone_2", "drone_1") and violation.timestamp_s is None
+    assert violation.description == (
+        "drone_2 was not flying its slot behind drone_1 from t=40 s on "
+        "(it did so from t=10 s to t=12 s), so its error was not measured"
+    )
+
+
+def test_formation_error_names_a_follower_that_never_flew_while_the_others_did():
+    mission = {"type": "formation", "formation": "line", "drone_count": 3, "spacing_m": 3.0}
+    homes = {**HOMES, "drone_3": Vector3(0.0, 6.0, 0.0)}
+    trace = Trace("hand_built", "reference", 1, 0.1, homes)
+    trace.missions = [(1.0, MISSION, mission)]
+    trace.frames = [
+        Frame(
+            t,
+            (
+                _sample("drone_1", Vector3(t, 0, 5)),
+                _sample("drone_2", Vector3(t - 3, 0, 5)),
+                _sample("drone_3", Vector3(0, 6, 0), armed=False, mode="AUTO.LOITER"),
+            ),
+            MISSION,
+            False,
+        )
+        for t in (10.0, 11.0)
+    ]
+
+    outcome = _check("formation_error", trace, max_m=1.0)
+
+    assert not outcome.passed and outcome.measured == 0.0  # drone_2 was measured, in its slot
+    (violation,) = outcome.violations
+    assert violation.drone_ids == ("drone_3", "drone_1")
+    assert "(it never did in this run)" in violation.description
+
+
 def test_never_mode_reports_the_first_time_the_mode_was_entered():
     trace = _trace(
         [
@@ -211,6 +299,20 @@ def test_never_mode_reports_the_first_time_the_mode_was_entered():
     outcome = _check("never_mode", trace, drone="drone_2", mode="AUTO.RTL")
 
     assert not outcome.passed and outcome.violations[0].timestamp_s == 2.0
+
+
+def test_an_assertion_about_an_absence_passes_having_measured_nothing():
+    """never_mode claims the mode never happened; "nothing happened" is its pass, so the
+    rule that a distance check must measure something does not apply to it."""
+    trace = _trace(
+        [
+            _frame(1.0, _sample("drone_1", Vector3(0, 0, 5)), _sample("drone_2", Vector3(0, 3, 5))),
+        ]
+    )
+
+    outcome = _check("never_mode", trace, drone="drone_2", mode="AUTO.RTL")
+
+    assert outcome.passed and outcome.measured is None
 
 
 def test_every_assertion_in_the_schema_has_an_implementation():
