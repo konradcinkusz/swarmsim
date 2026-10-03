@@ -12,6 +12,7 @@ jsonschema = pytest.importorskip("jsonschema")
 pytest.importorskip("yaml")
 
 from swarm_coordination.drone_controller import DroneController  # noqa: E402
+from swarm_coordination.mission_planning import plan_mission  # noqa: E402
 from swarm_coordination.scenarios import runner  # noqa: E402
 from swarm_coordination.scenarios.__main__ import main  # noqa: E402
 from swarm_coordination.scenarios.expectations import (  # noqa: E402
@@ -120,6 +121,30 @@ def test_formation_error_judges_the_shape_not_the_reference_swarms_roles():
     # The roles really were not the reference swarm's: in mid-flight drone_2 is in front.
     frame = next(f for f in trace.frames if f.t_s >= 22.0)
     assert {s.mode for s in frame.drones} == {"OFFBOARD"}
+    assert max(frame.drones, key=lambda s: s.position.x).drone_id == "drone_2"
+
+
+def test_a_swarm_that_differs_from_the_reference_only_in_its_planner_is_one_line():
+    """The planner seam (supervisor.Planner): drone_2 leads and drone_1 takes the first slot,
+    with no supervisor subclass. It is offered where the drones stood when the mission
+    arrived, from the telemetry the ground software already receives."""
+    spec = load_scenario(SCENARIOS / "formation_line.yaml")
+    offered = {}
+
+    def second_leads(mission, drones, positions):
+        offered.update(positions)
+        return plan_mission(mission, [drones[1], drones[0], *drones[2:]][: mission.drone_count])
+
+    swarm = ReferenceSwarm(name="second-leads", planner=second_leads)
+
+    verdict, trace = run_scenario(spec, swarm, 1)
+
+    assert verdict.passed
+    assert len(offered) >= 3
+    for drone, position in offered.items():  # every drone, on its pad
+        n = int(drone.rsplit("_", 1)[1])
+        assert (position.x, position.y, position.z) == pytest.approx((0.0, 3.0 * (n - 1), 0.0))
+    frame = next(f for f in trace.frames if f.t_s >= 22.0)
     assert max(frame.drones, key=lambda s: s.position.x).drone_id == "drone_2"
 
 

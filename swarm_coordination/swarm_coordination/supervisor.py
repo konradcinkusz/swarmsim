@@ -21,12 +21,18 @@ Battery policy (the one place it is decided):
   rather than left flying the old plan.
 
 A battery nobody has reported (None) blocks nothing, and never qualifies a drone as a
-replacement either. No rclpy: unit tested without ROS.
+replacement either.
+
+Planning is a seam: ``planner`` decides which of the drones fit to fly take part in a
+mission, who leads and who takes which slot, from where the drones are
+(:data:`Planner`). Without one, the lowest ids fly and the lowest id leads. A hand-over
+after a low battery is not planned by it: the replacement takes the place of the drone
+going home. No rclpy: unit tested without ROS.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from .mission_planning import CommandMessage, MissionMessage, MissionPlan, plan_mission
@@ -87,6 +93,13 @@ class TaskDropped:
 
 Action = Assign | Slot | Command | ActiveMission | Rejected | TaskDropped
 
+# A mission, the drones fit to fly it in id order, and where those that have reported are
+# (world frame): the plan. It uses exactly ``drone_count`` of them, and every follower's
+# leader flies a path. ``plan_mission`` is the default, which flies the first ones. The
+# supervisor keeps the plan it is given and edits it in place at a hand-over, so a planner
+# returns a plan of its own each time.
+Planner = Callable[[MissionMessage, Sequence[str], Mapping[str, Vector3]], MissionPlan]
+
 
 @dataclass
 class _Progress:
@@ -110,15 +123,42 @@ def _id_order(drone: str) -> tuple[int, str]:
     return (int(number), drone) if number.isdigit() else (1 << 30, drone)
 
 
+def _unusable(plan: object, mission: MissionMessage, offered: Sequence[str]) -> str | None:
+    """Why ``plan`` cannot be flown as a plan for ``mission`` on ``offered``, or None."""
+    if not isinstance(plan, MissionPlan):
+        return f"it returned {type(plan).__name__}, not a MissionPlan"
+    if plan.mission_id != mission.mission_id:
+        return f"it is for mission {plan.mission_id}, not {mission.mission_id}"
+    both = sorted(set(plan.paths) & set(plan.followers), key=_id_order)
+    if both:
+        return f"{', '.join(both)} would fly a path and follow a leader at once"
+    drones = [*plan.paths, *plan.followers]
+    if len(drones) != mission.drone_count:
+        return f"it uses {len(drones)} drone(s) and the mission needs {mission.drone_count}"
+    unfit = [d for d in drones if d not in offered]
+    if unfit:
+        return f"{', '.join(unfit)}: not among the drones fit to fly"
+    empty = [d for d, path in plan.paths.items() if not path]
+    if empty:
+        return f"{', '.join(empty)} would fly an empty path"
+    for follower, (leader, _) in plan.followers.items():
+        if leader not in plan.paths:
+            return f"{follower} follows {leader}, which flies no path"
+    return None
+
+
 class MissionSupervisor:
     def __init__(
         self,
         drones: Sequence[str],
         battery_threshold_pct: float = DEFAULT_BATTERY_THRESHOLD_PCT,
+        planner: Planner | None = None,
     ) -> None:
         self.drones = sorted(drones, key=_id_order)
         self.battery_threshold_pct = battery_threshold_pct
         self._battery: dict[str, float | None] = {d: None for d in self.drones}
+        self._positions: dict[str, Vector3] = {}
+        self._planner = planner
         self._mission: _Mission | None = None
 
     # --- what the swarm reports ------------------------------------------------------
@@ -126,6 +166,13 @@ class MissionSupervisor:
     def observe_battery(self, drone: str, battery_pct: float | None) -> None:
         if drone in self._battery:
             self._battery[drone] = battery_pct
+
+    def observe_position(self, drone: str, position: Vector3 | None, armed: bool) -> None:
+        """Where ``drone`` says it is (world frame) and whether it is armed. The latest
+        report is kept for the planner. A disarmed drone is standing on its pad, so a
+        subclass can average what such a drone reports instead of trusting each one."""
+        if position is not None and drone in self._battery:
+            self._positions[drone] = position
 
     def observe_progress(
         self, drone: str, mission_id: str | None, waypoint_index: int | None, complete: bool
@@ -156,7 +203,10 @@ class MissionSupervisor:
             return [Rejected(mission.mission_id, reason)]
 
         superseded = set(self.mission_drones())
-        plan = plan_mission(mission, eligible[: mission.drone_count])
+        planned = self._plan(mission, eligible)
+        if isinstance(planned, Rejected):
+            return [planned]
+        plan = planned
         self._mission = _Mission(mission.mission_id, plan)
         actions: list[Action] = [
             Command(drone, "rtl") for drone in sorted(superseded - set(plan.drones), key=_id_order)
@@ -217,6 +267,20 @@ class MissionSupervisor:
         return self._mission_drones() if self._mission else []
 
     # --- internals ----------------------------------------------------------------------
+
+    def _plan(self, mission: MissionMessage, eligible: list[str]) -> MissionPlan | Rejected:
+        """The plan for ``mission``: the planner's if there is one, else the lowest ids'."""
+        if self._planner is None:
+            return plan_mission(mission, eligible[: mission.drone_count])
+        known = {d: self._positions[d] for d in eligible if d in self._positions}
+        try:
+            plan = self._planner(mission, list(eligible), known)
+        except Exception as exc:  # the planner is another party's code
+            return Rejected(mission.mission_id, f"the planner failed: {type(exc).__name__}: {exc}")
+        problem = _unusable(plan, mission, eligible)
+        if problem is not None:
+            return Rejected(mission.mission_id, f"the planner's plan cannot be flown: {problem}")
+        return plan
 
     def _low(self, drone: str) -> bool:
         battery = self._battery.get(drone)

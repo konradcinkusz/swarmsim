@@ -28,6 +28,7 @@ from ..supervisor import (
     Assign,
     Command,
     MissionSupervisor,
+    Planner,
     Rejected,
     Slot,
     TaskDropped,
@@ -222,6 +223,7 @@ class ReferenceGround:
                 reading.mode = body["mode"]
                 reading.battery_pct = body["battery_pct"]
                 self.supervisor.observe_battery(message.sender, body["battery_pct"])
+                self.supervisor.observe_position(message.sender, body["position"], body["armed"])
             elif message.topic == "progress":
                 body = message.body
                 reading.mission_id = body.get("mission_id")
@@ -284,9 +286,13 @@ class ReferenceSwarm:
     supervisor_cls: type[MissionSupervisor] = MissionSupervisor
     controller_cls: type[DroneController] = DroneController
     drone_cls: type[ReferenceDrone] = ReferenceDrone
+    planner: Planner | None = None  # how missions are planned onto drones (supervisor.Planner)
 
     def ground(self, fleet: Sequence[DroneInfo]) -> ReferenceGround:
-        supervisor = self.supervisor_cls([d.drone_id for d in fleet], self.battery_threshold_pct)
+        extra = {} if self.planner is None else {"planner": self.planner}
+        supervisor = self.supervisor_cls(
+            [d.drone_id for d in fleet], self.battery_threshold_pct, **extra
+        )
         return ReferenceGround(fleet, supervisor)
 
     def drone(self, drone: DroneInfo, fleet: Sequence[DroneInfo]) -> ReferenceDrone:

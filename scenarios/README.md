@@ -38,6 +38,21 @@ attitude dynamics, motors and the estimator: a scenario that passes has shown th
 through the rosbridge contract, the way SwarmApi.Api drives it. The same seed reproduces a
 run exactly.
 
+A swarm that differs from it in how it plans needs no subclass of the supervisor:
+`ReferenceSwarm(planner=...)` takes a `supervisor.Planner`, a function from the mission, the
+drones fit to fly it and where those have reported they are, to a `MissionPlan`. It decides
+which drones fly, who leads and who takes which slot, as `plan_mission` does with the lowest
+ids. A plan it cannot fly, or an exception, rejects the mission with the reason and leaves the
+one in flight flying. A hand-over after a low battery is not planned by it.
+
+```python
+def nearest_leads(mission, drones, positions):
+    ranked = sorted(drones, key=lambda d: positions[d].distance_to(mission.waypoints[0]))
+    return plan_mission(mission, ranked[: mission.drone_count])
+
+swarm = ReferenceSwarm(name="nearest-leads", planner=nearest_leads)
+```
+
 ## Writing one
 
 ```yaml
