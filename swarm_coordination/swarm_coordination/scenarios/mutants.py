@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 from ..drone_controller import DroneController
 from ..supervisor import MissionSupervisor
 from ..trajectory import Vector3
-from .sut import ReferenceDrone, ReferenceSwarm
+from .sut import ReferenceDrone, ReferenceSwarm, SystemUnderTest
 
 
 class _NeverLandsController(DroneController):
@@ -56,7 +56,7 @@ class _BatteryBlindSupervisor(MissionSupervisor):
 class Mutant:
     name: str
     breaks: str
-    sut: ReferenceSwarm
+    sut: SystemUnderTest  # any swarm: the mutation check of another swarm brings its own
 
 
 def _mutant(name: str, breaks: str, **parts) -> Mutant:

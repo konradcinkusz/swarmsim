@@ -12,6 +12,7 @@ reference swarm's; given ``expectations`` it is the one written for the swarm un
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree
@@ -90,6 +91,7 @@ def run_suite(
     mutation: bool = False,
     trace_dir: Path | None = None,
     expectations: Expectations | None = None,
+    mutants: Sequence[Mutant] | None = None,
 ) -> SuiteReport:
     report = SuiteReport(sut=sut.name, seeds=list(seeds), expectations=expectations)
     try:
@@ -129,14 +131,15 @@ def run_suite(
         report.scenarios.append(ScenarioReport(spec, verdicts))
 
     if mutation:
-        report.mutants = list(MUTANTS)
+        # The reference swarm's mutants, unless the swarm under test brings its own.
+        report.mutants = list(MUTANTS if mutants is None else mutants)
         for scenario in report.scenarios:
             # Only a scenario the real swarm passes says anything by failing a mutant.
             if scenario.outcome != "passed":
                 continue
             scenario.killed_by = [
                 m.name
-                for m in MUTANTS
+                for m in report.mutants
                 if not run_scenario(scenario.spec, m.sut, seeds[0])[0].passed
             ]
     return report

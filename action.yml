@@ -74,9 +74,17 @@ inputs:
     description: >-
       "true": also run every scenario against deliberately broken versions of the
       reference swarm, and fail if a scenario catches none of them or a broken swarm
-      passes them all. Reference swarm only.
+      passes them all. Reference swarm only; another swarm brings its own: `mutants-from`.
     required: false
     default: "false"
+  mutants-from:
+    description: >-
+      Optional. MODULE:ATTRIBUTE, importable from the workspace, of the broken versions of
+      your swarm for the mutation check: a sequence of Mutant(name, breaks, sut), as in
+      scenarios/mutants.py, or a function returning one. It runs the same check as
+      `mutation-check` with your mutants, so give one or the other, not both.
+    required: false
+    default: ""
   junit-path:
     description: "Where to write the JUnit XML report."
     required: false
@@ -135,6 +143,7 @@ runs:
         SEED: ${{ inputs.seed }}
         SUT: ${{ inputs.sut }}
         EXPECT: ${{ inputs.expect }}
+        MUTANTS_FROM: ${{ inputs.mutants-from }}
         MUTATION: ${{ inputs.mutation-check }}
         JUNIT: ${{ inputs.junit-path }}
         SUMMARY: ${{ inputs.job-summary }}
@@ -150,6 +159,7 @@ runs:
         if [ -n "$SUT" ]; then args+=(--sut "$SUT"); fi
         if [ -n "$EXPECT" ]; then args+=(--expect "$EXPECT"); fi
         if [ "$MUTATION" = "true" ]; then args+=(--mutants); fi
+        if [ -n "$MUTANTS_FROM" ]; then args+=(--mutants-from "$MUTANTS_FROM"); fi
         if [ -n "$UPLOAD_URL" ]; then args+=(--upload "$UPLOAD_URL"); fi
         if [ -n "$UPLOAD_LABEL" ]; then args+=(--label "$UPLOAD_LABEL"); fi
 

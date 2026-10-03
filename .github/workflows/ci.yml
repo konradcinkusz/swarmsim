@@ -158,6 +158,33 @@ jobs:
           junit-path: both-scenario-results.xml
           job-summary: "false"
 
+      # A swarm given with `sut` brings its own mutants, `mutants-from`: before, `sut` and the
+      # mutation check could not be combined. The swarm and its mutants here are the reference
+      # swarm's own, importable from the package. Over one scenario most of them are not
+      # caught, which the check must report.
+      - name: A named swarm with its own mutants (must pass)
+        id: mutants
+        uses: ./
+        with:
+          scenarios: scenarios
+          sut: swarm_coordination.scenarios.sut:ReferenceSwarm
+          mutants-from: swarm_coordination.scenarios.mutants:MUTANTS
+          seeds: "1"
+          junit-path: mutants-scenario-results.xml
+          job-summary: "false"
+
+      - name: A mutant no scenario fails (must fail)
+        id: survivor
+        continue-on-error: true
+        uses: ./
+        with:
+          scenarios: scenarios/waypoint_lanes.yaml
+          sut: swarm_coordination.scenarios.sut:ReferenceSwarm
+          mutants-from: swarm_coordination.scenarios.mutants:MUTANTS
+          seeds: "1"
+          junit-path: survivor-scenario-results.xml
+          job-summary: "false"
+
       - name: The action passed what it must pass and failed what it must fail
         env:
           SUITE_PASSED: ${{ steps.suite.outputs.passed }}
@@ -167,6 +194,9 @@ jobs:
           UNEXCUSED_PASSED: ${{ steps.unexcused.outputs.passed }}
           RECORDED_PASSED: ${{ steps.recorded.outputs.passed }}
           BOTH_PASSED: ${{ steps.both.outputs.passed }}
+          MUTANTS_PASSED: ${{ steps.mutants.outputs.passed }}
+          SURVIVOR_OUTCOME: ${{ steps.survivor.outcome }}
+          SURVIVOR_PASSED: ${{ steps.survivor.outputs.passed }}
         run: |
           test "$SUITE_PASSED" = "true"
           test "$FAILING_OUTCOME" = "failure" \
@@ -182,6 +212,12 @@ jobs:
           test "$BOTH_PASSED" = "true"
           grep -q 'scenarios.impossible_deadline' both-scenario-results.xml  # the caller's
           grep -q 'scenarios.waypoint_lanes' both-scenario-results.xml  # swarmsim's
+          test "$MUTANTS_PASSED" = "true"
+          grep -q 'fails at least one mutant' mutants-scenario-results.xml
+          test "$SURVIVOR_OUTCOME" = "failure" \
+            || { echo "::error::mutants-from did not run the mutation check"; exit 1; }
+          test "$SURVIVOR_PASSED" = "false"
+          grep -q 'passes every scenario' survivor-scenario-results.xml
 
       - name: Upload scenario reports
         if: always()

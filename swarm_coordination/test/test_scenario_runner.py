@@ -2,6 +2,7 @@
 
 import copy
 import json
+import sys
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -204,6 +205,22 @@ def test_a_scenario_no_mutant_fails_is_toothless_and_fails_the_suite(tmp_path, m
     report = runner.run_suite([suite], ReferenceSwarm(), [1], mutation=True)
 
     assert report.scenarios[0].toothless
+    assert report.survivors() == ["harmless"]
+    assert not report.ok
+
+
+def test_a_swarm_under_test_can_bring_its_own_mutants_to_run_suite(tmp_path):
+    suite = _suite(tmp_path, _variant("easy", assertions=[{"all_landed": {"by_s": 40}}]))
+    never_lands = next(m for m in MUTANTS if m.name == "never_lands")
+    mine = Mutant("my_never_lands", "a drone of mine that hovers for good", never_lands.sut)
+    harmless = Mutant("harmless", "changes nothing", ReferenceSwarm(name="mutant:harmless"))
+
+    report = runner.run_suite(
+        [suite], ReferenceSwarm(), [1], mutation=True, mutants=[mine, harmless]
+    )
+
+    assert [m.name for m in report.mutants] == ["my_never_lands", "harmless"]
+    assert report.scenarios[0].killed_by == ["my_never_lands"]  # not the reference's eight
     assert report.survivors() == ["harmless"]
     assert not report.ok
 
@@ -430,6 +447,139 @@ def test_another_swarm_plugs_in_with_sut(tmp_path, monkeypatch):
     assert json.loads(output.read_text(encoding="utf-8"))["sut"] == "my-swarm"
     assert main(["run", str(SCENARIOS), "--sut", "my_swarm:build", "--mutants"]) == 2
     assert main(["run", str(SCENARIOS), "--sut", "my_swarm:nothing"]) == 2
+
+
+_MY_SWARM = """\
+from swarm_coordination.scenarios.mutants import Mutant
+from swarm_coordination.scenarios.sut import ReferenceSwarm
+
+
+def build():
+    return ReferenceSwarm(name="my-swarm")
+
+
+def _mutant(name, breaks, **parts):
+    return Mutant(name, breaks, ReferenceSwarm(name=f"my-swarm/{name}", **parts))
+
+
+MUTANTS = (
+    _mutant("holds_slots_forever", "a follower never gives up on its leader",
+            comms_timeout_s=float("inf")),
+    _mutant("gives_up_at_once", "a follower gives up after 0.3 s", comms_timeout_s=0.3),
+)
+HARMLESS = MUTANTS + (_mutant("harmless", "changes nothing"),)
+TWICE = MUTANTS + (MUTANTS[0],)
+EMPTY = ()
+BY_NAME = {"holds_slots_forever": ReferenceSwarm()}
+NO_SWARM = (Mutant("no_swarm", "is not a swarm", object()),)
+
+
+def make_mutants():
+    return list(MUTANTS)
+"""
+TWO_SCENARIOS = ["follower_comms_blip.yaml", "follower_jammed_goes_home.yaml"]
+
+
+def _my_swarm(tmp_path, monkeypatch):
+    sys.modules.pop("swarm_with_mutants", None)  # one an earlier test imported from elsewhere
+    (tmp_path / "swarm_with_mutants.py").write_text(_MY_SWARM, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    return [str(SCENARIOS / name) for name in TWO_SCENARIOS]
+
+
+def test_another_swarm_brings_its_own_mutants_to_the_mutation_check(tmp_path, monkeypatch, capsys):
+    scenarios = _my_swarm(tmp_path, monkeypatch)
+    output = tmp_path / "report.json"
+    mine = ["--sut", "swarm_with_mutants:build", "--mutants-from", "swarm_with_mutants:MUTANTS"]
+
+    assert main(["run", *scenarios, *mine, "--json", str(output)]) == 0
+    assert (
+        main(
+            [
+                "run",
+                *scenarios,
+                "--sut",
+                "swarm_with_mutants:build",
+                "--mutants-from",
+                "swarm_with_mutants:make_mutants",
+            ]
+        )
+        == 0
+    )  # a function returning them
+
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert [m["name"] for m in report["mutation"]["mutants"]] == [
+        "holds_slots_forever",
+        "gives_up_at_once",
+    ]
+    assert report["mutation"]["survivors"] == []
+    killed = {s["name"]: s["killed_mutants"] for s in report["scenarios"]}
+    assert killed == {
+        "follower_comms_blip": ["gives_up_at_once"],
+        "follower_jammed_goes_home": ["holds_slots_forever"],
+    }
+    assert "Mutation check: 2 of 2 mutants caught." in capsys.readouterr().out
+
+
+def test_a_mutant_of_another_swarm_that_every_scenario_passes_fails_the_run(
+    tmp_path, monkeypatch, capsys
+):
+    scenarios = _my_swarm(tmp_path, monkeypatch)
+
+    status = main(
+        [
+            "run",
+            *scenarios,
+            "--sut",
+            "swarm_with_mutants:build",
+            "--mutants-from",
+            "swarm_with_mutants:HARMLESS",
+        ]
+    )
+
+    assert status == 1
+    assert "not caught: harmless" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("target", "complaint"),
+    [
+        ("swarm_with_mutants", "must be MODULE:ATTRIBUTE"),
+        ("swarm_with_mutants:MISSING", "no attribute 'MISSING'"),
+        ("swarm_with_mutants:EMPTY", "non-empty sequence of Mutant"),
+        ("swarm_with_mutants:build", "non-empty sequence of Mutant"),
+        ("swarm_with_mutants:BY_NAME", "'holds_slots_forever' has no 'name'"),
+        ("swarm_with_mutants:NO_SWARM", "the sut of no_swarm has no 'ground'"),
+        ("swarm_with_mutants:TWICE", "used twice: holds_slots_forever"),
+    ],
+)
+def test_mutants_that_cannot_be_used_are_exit_status_2_with_the_reason(
+    tmp_path, monkeypatch, capsys, target, complaint
+):
+    scenarios = _my_swarm(tmp_path, monkeypatch)
+
+    assert (
+        main(["run", scenarios[0], "--sut", "swarm_with_mutants:build", "--mutants-from", target])
+        == 2
+    )
+
+    error = capsys.readouterr().err
+    assert f"--mutants-from {target}" in error or "must be MODULE:ATTRIBUTE" in error
+    assert complaint in error
+
+
+def test_the_reference_mutants_stay_the_reference_swarms_and_the_two_options_exclude_each_other(
+    tmp_path, monkeypatch, capsys
+):
+    scenarios = _my_swarm(tmp_path, monkeypatch)
+
+    assert main(["run", scenarios[0], "--sut", "swarm_with_mutants:build", "--mutants"]) == 2
+    assert (
+        "--mutants-from MODULE:ATTR takes the broken versions of yours" in capsys.readouterr().err
+    )
+    with pytest.raises(SystemExit) as refused:
+        main(["run", scenarios[0], "--mutants", "--mutants-from", "swarm_with_mutants:MUTANTS"])
+    assert refused.value.code == 2
 
 
 def test_the_command_line_takes_the_expectations_of_the_swarm_under_test(tmp_path, capsys):

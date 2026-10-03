@@ -1,7 +1,8 @@
 """Command line: python -m swarm_coordination.scenarios {run,validate,mutants} ...
 
     run       [PATH ...] [--seed N] [--seeds K] [--sut MODULE:ATTR] [--expect FILE]
-              [--mutants] [--junit FILE] [--json FILE] [--markdown FILE] [--traces DIR]
+              [--mutants | --mutants-from MODULE:ATTR]
+              [--junit FILE] [--json FILE] [--markdown FILE] [--traces DIR]
               [--upload API_URL [--label TEXT]]   (token: $SWARMSIM_API_TOKEN)
     validate  [PATH ...]       check scenario files against the schema, run nothing
     mutants                    list the broken swarms the mutation check uses
@@ -9,7 +10,10 @@
 PATH is a scenario file or a directory searched for *.yaml (default: ./scenarios).
 A scenario's expectation is its file's own `expect`, written for this repo's swarm;
 --expect FILE replaces those with the ones written for the swarm under test.
-Exit status: 0 when every scenario met its expectation (and, with --mutants, every
+The mutation check flies every scenario against broken swarms: --mutants uses this repo's,
+which are broken versions of its own swarm; --mutants-from MODULE:ATTR uses the ones you
+wrote for yours, a sequence of Mutant(name, breaks, sut) as in scenarios/mutants.py.
+Exit status: 0 when every scenario met its expectation (and, with a mutation check, every
 scenario failed at least one mutant and every mutant was failed by one), 1 when not,
 2 when the scenarios, the expectations or the arguments could not be used. A failed
 --upload is reported and never changes it: the verdict is made here, storing it is only
@@ -33,17 +37,22 @@ from .sut import ReferenceSwarm
 from .upload import TOKEN_VARIABLE, UploadError, upload_report
 
 
+def _import_target(option: str, reference: str):
+    """What MODULE:ATTRIBUTE names, importing the module from the working directory too."""
+    module_name, _, attribute = reference.partition(":")
+    if not module_name or not attribute:
+        raise ScenarioError(f"{option} must be MODULE:ATTRIBUTE, got '{reference}'")
+    sys.path.insert(0, str(Path.cwd()))
+    try:
+        return getattr(importlib.import_module(module_name), attribute)
+    except (ImportError, AttributeError) as exc:
+        raise ScenarioError(f"{option} {reference}: {exc}") from None
+
+
 def _load_sut(reference: str | None):
     if not reference:
         return ReferenceSwarm()
-    module_name, _, attribute = reference.partition(":")
-    if not module_name or not attribute:
-        raise ScenarioError(f"--sut must be MODULE:ATTRIBUTE, got '{reference}'")
-    sys.path.insert(0, str(Path.cwd()))
-    try:
-        target = getattr(importlib.import_module(module_name), attribute)
-    except (ImportError, AttributeError) as exc:
-        raise ScenarioError(f"--sut {reference}: {exc}") from None
+    target = _import_target("--sut", reference)
     # A class or a factory function is called; an object that already is a swarm is used.
     is_swarm = not isinstance(target, type) and hasattr(target, "ground")
     sut = target if is_swarm else target()
@@ -51,6 +60,42 @@ def _load_sut(reference: str | None):
         if not hasattr(sut, needed):
             raise ScenarioError(f"--sut {reference}: has no '{needed}' (see scenarios/sut.py)")
     return sut
+
+
+def _load_mutants(reference: str) -> list:
+    """The broken swarms a swarm brings for its own mutation check: a sequence of Mutant
+    (name, breaks, sut), or a function returning one."""
+    target = _import_target("--mutants-from", reference)
+    produced = target() if callable(target) else target
+    try:
+        mutants = list(produced)
+    except TypeError:  # not a sequence at all
+        mutants = []
+    if not mutants:
+        raise ScenarioError(
+            f"--mutants-from {reference}: expected a non-empty sequence of Mutant(name, breaks, "
+            "sut), or a function returning one (see scenarios/mutants.py)"
+        )
+    for mutant in mutants:
+        for needed in ("name", "breaks", "sut"):
+            if not hasattr(mutant, needed):
+                raise ScenarioError(
+                    f"--mutants-from {reference}: {mutant!r} has no '{needed}': each mutant is "
+                    "Mutant(name, breaks, sut) (see scenarios/mutants.py)"
+                )
+        for needed in ("ground", "drone"):
+            if not hasattr(mutant.sut, needed):
+                raise ScenarioError(
+                    f"--mutants-from {reference}: the sut of {mutant.name} has no '{needed}' "
+                    "(see scenarios/sut.py)"
+                )
+    names = [m.name for m in mutants]
+    twice = sorted({n for n in names if names.count(n) > 1})
+    if twice:
+        raise ScenarioError(
+            f"--mutants-from {reference}: mutant name(s) used twice: {', '.join(twice)}"
+        )
+    return mutants
 
 
 def _write(path: str | None, text: str) -> None:
@@ -74,7 +119,18 @@ def main(argv: list[str] | None = None) -> int:
         help="the scenarios this swarm is expected to fail, with reasons (YAML); "
         "replaces the scenario files' own expect",
     )
-    run.add_argument("--mutants", action="store_true", help="also run the mutation check")
+    mutation = run.add_mutually_exclusive_group()
+    mutation.add_argument(
+        "--mutants",
+        action="store_true",
+        help="also run the mutation check, with this repo's mutants (its own swarm only)",
+    )
+    mutation.add_argument(
+        "--mutants-from",
+        metavar="MODULE:ATTR",
+        help="also run the mutation check, with these mutants: a sequence of "
+        "Mutant(name, breaks, sut), the broken versions of the swarm given with --sut",
+    )
     run.add_argument("--junit", help="write a JUnit XML report here")
     run.add_argument("--json", help="write a JSON report here")
     run.add_argument("--markdown", help="write a Markdown summary here (appends)")
@@ -115,12 +171,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         sut = _load_sut(args.sut)
         expectations = load_expectations(args.expect) if args.expect else None
+        mutants = _load_mutants(args.mutants_from) if args.mutants_from else None
     except ScenarioError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     if args.mutants and args.sut:
         print(
-            "error: --mutants breaks this repo's swarm on purpose; it cannot mutate --sut",
+            "error: --mutants breaks this repo's swarm on purpose; it cannot mutate --sut "
+            "(--mutants-from MODULE:ATTR takes the broken versions of yours)",
             file=sys.stderr,
         )
         return 2
@@ -130,7 +188,8 @@ def main(argv: list[str] | None = None) -> int:
         args.paths,
         sut,
         seeds,
-        mutation=args.mutants,
+        mutation=args.mutants or mutants is not None,
+        mutants=mutants,
         trace_dir=Path(args.traces) if args.traces else None,
         expectations=expectations,
     )

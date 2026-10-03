@@ -129,6 +129,14 @@ fails is reported as toothless — it would not notice the behaviour it is named
 disappearing — and a mutant every scenario passes is a behaviour the suite does not guard.
 Either fails the run.
 
+`--mutants` breaks this repository's swarm, so it cannot mutate another one given with
+`--sut`. A swarm brings its own: `--mutants-from MODULE:ATTR` names a sequence of
+`Mutant(name, breaks, sut)` (see `scenarios/mutants.py`), or a function returning one, where
+each `sut` is a broken version of the swarm under test, one decision undone. The check is the
+same: every scenario the swarm passes must fail at least one of them, and every one of them
+must fail a scenario. Which breakages are plausible is its author's judgement. The runner
+checks that they are there and what they do, not that they are good.
+
 ## In your own repository
 
 The root `action.yml` is a GitHub Action that runs the same check inside your job — no
@@ -142,6 +150,7 @@ service is called and nothing leaves the runner:
     sut: my_swarm.adapter:MySwarm   # optional: your swarm, see scenarios/sut.py
     expect: my_swarm/expectations.yaml   # optional: what it is expected to fail
     include-swarmsim-scenarios: "true"   # optional: swarmsim's own scenarios too
+    mutants-from: my_swarm.mutants:MUTANTS   # optional: its broken versions, for the mutation check
 ```
 
 It writes a JUnit report (`swarmsim-scenarios.xml`) and the Markdown table to the job
