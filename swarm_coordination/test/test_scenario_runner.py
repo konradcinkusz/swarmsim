@@ -16,6 +16,7 @@ from swarm_coordination.scenarios.harness import mission_payload, run_scenario  
 from swarm_coordination.scenarios.mutants import MUTANTS, Mutant  # noqa: E402
 from swarm_coordination.scenarios.spec import load_scenario, parse_scenario  # noqa: E402
 from swarm_coordination.scenarios.sut import ReferenceSwarm  # noqa: E402
+from swarm_coordination.supervisor import MissionSupervisor  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SCENARIOS = ROOT / "scenarios"
@@ -88,6 +89,31 @@ def test_follower_comms_blip_measures_the_recovered_formation_and_catches_a_wron
     mutant = next(m for m in MUTANTS if m.name == "no_frame_conversion")
     broken, _ = run_scenario(spec, mutant.sut, 1)
     assert "formation_error" in {o.assertion for o in broken.outcomes if not o.passed}
+
+
+class _SecondDroneLeads(MissionSupervisor):
+    """Elects drone_2 and gives drone_1 the first slot: not the reference swarm's roles."""
+
+    def __init__(self, drones, battery_threshold_pct=20.0):
+        super().__init__(drones, battery_threshold_pct)
+        self.drones = [self.drones[1], self.drones[0], *self.drones[2:]]
+
+
+def test_formation_error_judges_the_shape_not_the_reference_swarms_roles():
+    """A swarm that elects drone_2 flies the same line. formation_error used to assume that
+    drone_1 leads and the others take the slots in id order, and measured this swarm 8.2 m
+    out of formation (limit 2.5 m)."""
+    spec = load_scenario(SCENARIOS / "formation_line.yaml")
+    swarm = ReferenceSwarm(name="second-leads", supervisor_cls=_SecondDroneLeads)
+
+    verdict, trace = run_scenario(spec, swarm, 1)
+
+    outcome = next(o for o in verdict.outcomes if o.assertion == "formation_error")
+    assert outcome.passed and outcome.measured == pytest.approx(2.2, abs=0.05)
+    # The roles really were not the reference swarm's: in mid-flight drone_2 is in front.
+    frame = next(f for f in trace.frames if f.t_s >= 22.0)
+    assert {s.mode for s in frame.drones} == {"OFFBOARD"}
+    assert max(frame.drones, key=lambda s: s.position.x).drone_id == "drone_2"
 
 
 def test_a_comms_loss_cuts_messages_both_ways_for_its_duration_only():

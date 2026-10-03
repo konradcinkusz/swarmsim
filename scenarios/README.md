@@ -76,7 +76,7 @@ A `mission` is dispatched exactly as the API dispatches it (`contracts/rosbridge
 | `no_task_below_battery: {threshold_pct, grace_s?}` | no drone keeps flying under the swarm's control (OFFBOARD) for more than `grace_s` (default 3) once its battery is below the threshold | longest time it did |
 | `reaches: {drone, position, tolerance_m, by_s, from_s?}` | the drone comes within `tolerance_m` of `position` between `from_s` and `by_s` | when |
 | `final_position: {drone, position, tolerance_m}` | the drone ends the run within `tolerance_m` of `position` | the distance |
-| `formation_error: {max_m, leader?, from_s?, to_s?}` | each follower stays within `max_m` of its slot (leader's true position + the offset the last formation mission gives it) while both fly the formation; a follower that never flies it in the window fails the check, because its error was not measured | the largest error |
+| `formation_error: {max_m, leader?, from_s?, to_s?}` | the drones fit the last formation mission's shape within `max_m`: in every frame where exactly `drone_count` drones fly under offboard control, some drone is the apex and the others are matched to the slots around it (its true position + the formation's offsets), the largest distance of any drone from its slot as small as it can be. Who leads and who takes which slot is the swarm's choice, so the reference swarm's roles are not assumed; `leader` pins the apex. A window with no such frame fails, because nothing was measured | the largest error of the closest fit |
 | `never_mode: {drone, mode}` | the drone's autopilot never enters `mode` | when it did |
 
 Every violation carries the time it was measured at and the value against the threshold —
