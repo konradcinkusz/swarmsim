@@ -13,6 +13,14 @@ PYTHONPATH=swarm_coordination python3 -m swarm_coordination.scenarios run scenar
 PYTHONPATH=swarm_coordination python3 -m swarm_coordination.scenarios validate scenarios
 ```
 
+The runner also runs from an install, in any directory — the schema ships inside the
+package — so scenarios and a swarm under test can live in another repository:
+
+```bash
+pip install ./swarm_coordination pyyaml jsonschema
+python -m swarm_coordination.scenarios run my_scenarios --sut my_package:MySwarm --seeds 3
+```
+
 ## What runs a scenario
 
 **L0**: a seeded kinematic simulation of PX4 SITL and Gazebo (`scenarios/sim.py`). It keeps

@@ -89,6 +89,13 @@ reasoning; check there before assuming a gap is accidental.
   in the image or an airframe copy.
 - Adding to `.gitignore`: name the files, not an extension. `*.env` once hid the
   committed drone configs in `simulation/px4-configs/`.
+- Changing the scenario file format: the contract is `contracts/scenario/scenario.v1.schema.json`.
+  The runner reads a copy that ships inside the package
+  (`swarm_coordination/swarm_coordination/scenarios/scenario.v1.schema.json`), so that it
+  runs from a pip install, with no checkout. After changing the contract, copy it over the
+  packaged one; `test_the_schema_the_runner_ships_is_the_contract` fails with the command
+  if you forget, and `test_the_built_package_contains_the_schema` fails if `setup.py` stops
+  shipping it.
 - Changing the scenario report (`runner.to_json`): it is a contract,
   `contracts/scenario/report.v1.schema.json`, that `SwarmApi.Api` stores and compares.
   Change the schema, regenerate the example from the repository root —
@@ -122,6 +129,9 @@ reasoning; check there before assuming a gap is accidental.
   (Ubuntu's own archive) usually still works; otherwise let CI run it.
 - Python: `cd swarm_coordination && ruff check . && pytest` (`pip install jsonschema pyyaml`
   too, or the contract and scenario tests skip — CI installs both).
+- Installed package: `python -m venv /tmp/v && /tmp/v/bin/pip install ./swarm_coordination
+  pyyaml jsonschema && cd /tmp && /tmp/v/bin/python -m swarm_coordination.scenarios validate
+  <repo>/scenarios` (CI runs this as a step of the Python job).
 - Scenarios: `PYTHONPATH=swarm_coordination python3 -m swarm_coordination.scenarios run
   scenarios --seeds 3 --mutants` (seconds; exit 0 only if every scenario met its
   expectation and every mutant was caught).

@@ -33,7 +33,7 @@ origin) — never a drone's own local frame, whose origin is wherever that drone
 
 | File | What it is | Written by | Read by |
 |---|---|---|---|
-| [`scenario.v1.schema.json`](scenario/scenario.v1.schema.json) | A scenario file (`scenarios/*.yaml`): world, timeline, assertions | people | the runner (`scenarios/spec.py`) |
+| [`scenario.v1.schema.json`](scenario/scenario.v1.schema.json) | A scenario file (`scenarios/*.yaml`): world, timeline, assertions | people | the runner (`scenarios/spec.py`), through the copy the package ships so that it runs from an install; `test_scenario_spec.py` fails when the copy differs |
 | [`report.v1.schema.json`](scenario/report.v1.schema.json) | A suite report: every scenario's outcome, every seed's measured assertions, the mutation check | the runner (`runner.to_json`, `--json`, `--upload`) | `SwarmApi.Api`'s run store (`POST /api/scenario-runs`, docs/adr/0011) |
 
 [`scenario/examples/report.json`](scenario/examples/report.json) is a real report, not a

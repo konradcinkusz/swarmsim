@@ -65,15 +65,27 @@ jobs:
           python-version: "3.11"
 
       # jsonschema and pyyaml are for the contract and scenario tests, which skip without
-      # them — something CI must never do. The ROS nodes need neither.
+      # them — something CI must never do; setuptools, for the package-data test. The ROS
+      # nodes need none of them.
       - name: Install dependencies
-        run: pip install ruff pytest jsonschema pyyaml
+        run: pip install ruff pytest jsonschema pyyaml setuptools
 
       - name: ruff check
         run: ruff check .
 
       - name: pytest
         run: pytest -v
+
+      # Everything above runs from the source tree. The runner used to find its schema by
+      # walking up from spec.py to contracts/, which exists only in a checkout, so an
+      # installed one crashed on its first scenario. Install it into a clean venv and fly
+      # the scenarios from a directory that is not the checkout.
+      - name: The installed package runs the scenarios (outside the checkout)
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m venv installed
+          installed/bin/pip install --quiet "${GITHUB_WORKSPACE}/swarm_coordination" jsonschema pyyaml
+          installed/bin/python -m swarm_coordination.scenarios run "${GITHUB_WORKSPACE}/scenarios" --seeds 1
 
   scenarios:
     name: Swarm scenarios (L0, 3 seeds, mutation check)

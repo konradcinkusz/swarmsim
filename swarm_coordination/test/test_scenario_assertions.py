@@ -318,9 +318,9 @@ def test_an_assertion_about_an_absence_passes_having_measured_nothing():
 def test_every_assertion_in_the_schema_has_an_implementation():
     import json
 
-    from swarm_coordination.scenarios.spec import SCHEMA_PATH
+    from swarm_coordination.scenarios.spec import schema_text
 
-    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema = json.loads(schema_text())
     declared = set(schema["$defs"]["assertion"]["properties"])
 
     assert declared == set(assertions.ASSERTIONS)
