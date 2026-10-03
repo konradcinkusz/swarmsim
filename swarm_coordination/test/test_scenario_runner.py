@@ -12,6 +12,10 @@ pytest.importorskip("yaml")
 
 from swarm_coordination.scenarios import runner  # noqa: E402
 from swarm_coordination.scenarios.__main__ import main  # noqa: E402
+from swarm_coordination.scenarios.expectations import (  # noqa: E402
+    Expectations,
+    load_expectations,
+)
 from swarm_coordination.scenarios.harness import mission_payload, run_scenario  # noqa: E402
 from swarm_coordination.scenarios.mutants import MUTANTS, Mutant  # noqa: E402
 from swarm_coordination.scenarios.spec import load_scenario, parse_scenario  # noqa: E402
@@ -21,6 +25,7 @@ from swarm_coordination.supervisor import MissionSupervisor  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 SCENARIOS = ROOT / "scenarios"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "scenarios"
+EXPECTATION_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "expectations"
 ROSBRIDGE = ROOT / "contracts" / "rosbridge"
 
 
@@ -203,6 +208,122 @@ def test_a_scenario_no_mutant_fails_is_toothless_and_fails_the_suite(tmp_path, m
     assert not report.ok
 
 
+def _one_gap_closed_and_one_of_its_own(directory):
+    """Flown by the reference swarm as if it were another swarm: it passes a scenario whose
+    file says the reference fails it, and fails one whose file says nothing."""
+    directory.mkdir(exist_ok=True)
+    return _suite(
+        directory,
+        _variant("reference_gap", expect="fail", expect_reason="the reference cannot do this"),
+        _variant("own_gap", assertions=[{"mission_completes": {"within_s": 2}}]),
+    )
+
+
+def test_a_swarms_expectations_replace_the_scenario_files_own(tmp_path):
+    suite = _one_gap_closed_and_one_of_its_own(tmp_path)
+    expectations = Expectations({"own_gap": "too slow for a 2 s deadline"}, source="mine.yaml")
+
+    by_the_files = runner.run_suite([suite], ReferenceSwarm(), [1])
+    by_the_swarm = runner.run_suite([suite], ReferenceSwarm(), [1], expectations=expectations)
+
+    assert {s.spec.name: s.outcome for s in by_the_files.scenarios} == {
+        "reference_gap": "xpass",  # a gap that is closed, held against this swarm
+        "own_gap": "failed",  # a gap nobody wrote down
+    }
+    assert not by_the_files.ok
+    assert {s.spec.name: s.outcome for s in by_the_swarm.scenarios} == {
+        "reference_gap": "passed",  # the reference's declaration is not this swarm's
+        "own_gap": "xfail",
+    }
+    assert by_the_swarm.ok
+
+
+def test_the_reports_carry_the_expectation_that_applied(tmp_path):
+    suite = _one_gap_closed_and_one_of_its_own(tmp_path)
+    schema = json.loads((ROOT / "contracts" / "scenario" / "report.v1.schema.json").read_text())
+    expectations = Expectations({"own_gap": "too slow for a 2 s deadline"}, source="mine.yaml")
+
+    report = runner.run_suite([suite], ReferenceSwarm(), [1], expectations=expectations)
+
+    document = runner.to_json(report)
+    jsonschema.validate(document, schema, cls=jsonschema.Draft202012Validator)  # still v1
+    by_name = {s["name"]: s for s in document["scenarios"]}
+    assert (by_name["own_gap"]["expect"], by_name["own_gap"]["expect_reason"]) == (
+        "fail",
+        "too slow for a 2 s deadline",
+    )
+    assert (by_name["reference_gap"]["expect"], by_name["reference_gap"]["expect_reason"]) == (
+        "pass",
+        None,
+    )
+    markdown = runner.to_markdown(report)
+    assert "Expectations from `mine.yaml`" in markdown
+    assert "too slow for a 2 s deadline" in markdown
+    assert "the reference cannot do this" not in markdown
+    junit = ElementTree.fromstring(runner.to_junit(report))
+    skipped = junit.find(".//testcase[@classname='scenarios.own_gap']/skipped")
+    assert skipped.get("message") == "expected failure: too slow for a 2 s deadline"
+    assert junit.get("failures") == "0"
+
+
+def test_a_surprise_pass_says_it_was_expected_to_fail_whoever_expected_it(tmp_path):
+    suite = _suite(tmp_path, _variant("gap_closed"))
+    expectations = Expectations({"gap_closed": "this swarm cannot do it"})
+
+    report = runner.run_suite([suite], ReferenceSwarm(), [1], expectations=expectations)
+
+    assert report.scenarios[0].outcome == "xpass" and not report.ok
+    junit = ElementTree.fromstring(runner.to_junit(report))
+    failure = junit.find(".//testcase[@classname='scenarios.gap_closed']/failure")
+    assert failure.get("message") == "passed, but it is expected to fail"
+    assert "this swarm cannot do it" in failure.text
+
+
+def test_a_name_that_matches_no_scenario_is_reported_and_does_not_fail_the_run(tmp_path):
+    suite = _one_gap_closed_and_one_of_its_own(tmp_path)
+    expectations = Expectations(
+        {"own_gap": "too slow", "own_gapp": "a typo", "removed_long_ago": "stale"},
+        source="mine.yaml",
+    )
+
+    report = runner.run_suite([suite], ReferenceSwarm(), [1], expectations=expectations)
+
+    assert report.unused_expectations() == ["own_gapp", "removed_long_ago"]
+    assert report.ok
+    assert "`own_gapp`, `removed_long_ago`" in runner.to_markdown(report)
+    without = runner.run_suite([suite], ReferenceSwarm(), [1])
+    assert "not in this run" not in runner.to_markdown(without)
+
+
+def test_an_expectations_file_among_the_scenarios_is_not_one_of_them(tmp_path):
+    suite = _one_gap_closed_and_one_of_its_own(tmp_path)
+    mine = tmp_path / "expectations.yaml"
+    mine.write_text("version: 1\nexpect_fail:\n  own_gap: too slow\n", encoding="utf-8")
+
+    report = runner.run_suite([suite], ReferenceSwarm(), [1], expectations=load_expectations(mine))
+
+    assert report.ok and not report.errors
+    assert sorted(s.spec.name for s in report.scenarios) == ["own_gap", "reference_gap"]
+
+
+def test_the_mutation_check_follows_the_expectations_too(tmp_path, monkeypatch):
+    suite = _one_gap_closed_and_one_of_its_own(tmp_path)
+    harmless = Mutant("harmless", "changes nothing", ReferenceSwarm(name="mutant:harmless"))
+    monkeypatch.setattr(runner, "MUTANTS", (harmless,))
+    expectations = Expectations({"own_gap": "too slow"})
+
+    report = runner.run_suite(
+        [suite], ReferenceSwarm(), [1], mutation=True, expectations=expectations
+    )
+
+    # An expected failure says nothing by failing a mutant. What this swarm passes must.
+    assert {s.spec.name: s.killed_by for s in report.scenarios} == {
+        "own_gap": None,
+        "reference_gap": [],
+    }
+    assert [s.spec.name for s in report.scenarios if s.toothless] == ["reference_gap"]
+
+
 def test_duplicate_names_and_broken_files_are_errors_not_crashes(tmp_path):
     (tmp_path / "a.yaml").write_text(json.dumps(BASE), encoding="utf-8")
     (tmp_path / "b.yaml").write_text(json.dumps(BASE), encoding="utf-8")
@@ -309,6 +430,54 @@ def test_another_swarm_plugs_in_with_sut(tmp_path, monkeypatch):
     assert json.loads(output.read_text(encoding="utf-8"))["sut"] == "my-swarm"
     assert main(["run", str(SCENARIOS), "--sut", "my_swarm:build", "--mutants"]) == 2
     assert main(["run", str(SCENARIOS), "--sut", "my_swarm:nothing"]) == 2
+
+
+def test_the_command_line_takes_the_expectations_of_the_swarm_under_test(tmp_path, capsys):
+    suite = _one_gap_closed_and_one_of_its_own(tmp_path / "suite")
+    mine = tmp_path / "mine.yaml"
+    mine.write_text("version: 1\nexpect_fail:\n  own_gap: too slow\n", encoding="utf-8")
+    report = tmp_path / "report.json"
+
+    assert main(["run", str(suite)]) == 1  # the files' own: a closed gap is a surprise
+    assert main(["run", str(suite), "--expect", str(mine), "--json", str(report)]) == 0
+    assert main(["run", str(suite), "--expect", str(EXPECTATION_FIXTURES / "all_pass.yaml")]) == 1
+
+    scenarios = {s["name"]: s for s in json.loads(report.read_text(encoding="utf-8"))["scenarios"]}
+    assert scenarios["own_gap"]["outcome"] == "xfail"
+    assert scenarios["reference_gap"]["outcome"] == "passed"
+    assert "Expectations from" in capsys.readouterr().out
+
+
+def test_expectations_that_cannot_be_used_are_exit_status_2_with_the_reason(tmp_path, capsys):
+    suite = _one_gap_closed_and_one_of_its_own(tmp_path / "suite")
+    wrong = tmp_path / "wrong.yaml"
+    wrong.write_text("version: 2\n", encoding="utf-8")
+
+    assert main(["run", str(suite), "--expect", str(wrong)]) == 2
+    assert main(["run", str(suite), "--expect", str(tmp_path / "missing.yaml")]) == 2
+
+    error = capsys.readouterr().err
+    assert "wrong.yaml: version: 1 was expected" in error and "missing.yaml" in error
+
+
+def test_the_fixtures_the_ci_check_uses_behave_as_that_check_expects():
+    gap = str(SCENARIOS / "v_formation_from_pads.yaml")
+    # The reference swarm's known gap, with nothing excused: the file does not inherit it.
+    assert main(["run", gap]) == 0
+    assert main(["run", gap, "--expect", str(EXPECTATION_FIXTURES / "all_pass.yaml")]) == 1
+    # A failing scenario whose failure the file writes down: recorded, not hidden.
+    assert main(["run", str(FIXTURES)]) == 1
+    assert (
+        main(
+            [
+                "run",
+                str(FIXTURES),
+                "--expect",
+                str(EXPECTATION_FIXTURES / "impossible_deadline.yaml"),
+            ]
+        )
+        == 0
+    )
 
 
 def test_parse_scenario_accepts_what_the_yaml_loader_produces():

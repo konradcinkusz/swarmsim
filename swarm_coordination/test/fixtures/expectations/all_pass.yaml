@@ -1,0 +1,4 @@
+# A swarm expected to pass every scenario it is flown: nothing is excused. CI flies the
+# reference swarm against v_formation_from_pads with this file to show that it replaces
+# the scenario file's own `expect: fail` — the file has to fail, and here nothing excuses it.
+version: 1

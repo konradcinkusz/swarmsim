@@ -86,6 +86,10 @@ jobs:
           python -m venv installed
           installed/bin/pip install --quiet "${GITHUB_WORKSPACE}/swarm_coordination" jsonschema pyyaml
           installed/bin/python -m swarm_coordination.scenarios run "${GITHUB_WORKSPACE}/scenarios" --seeds 1
+          # ... and reads an expectations file, which needs the second packaged schema.
+          installed/bin/python -m swarm_coordination.scenarios run \
+            "${GITHUB_WORKSPACE}/swarm_coordination/test/fixtures/scenarios" \
+            --expect "${GITHUB_WORKSPACE}/swarm_coordination/test/fixtures/expectations/impossible_deadline.yaml"
 
   scenarios:
     name: Swarm scenarios (L0, 3 seeds, mutation check)
@@ -114,17 +118,52 @@ jobs:
           junit-path: failing-scenario-results.xml
           job-summary: "false"
 
-      - name: The action passed the suite and failed the failing scenario
+      # An expectations file is a swarm's own record of what it is expected to fail, and it
+      # replaces the scenario files' own `expect`. v_formation_from_pads is the reference
+      # swarm's known gap (its file says so): a file that excuses nothing must hold the
+      # reference to it. And the fixture above fails by design: once a file writes the
+      # failure down, the run passes.
+      - name: Expectations replace the scenario's own (must fail)
+        id: unexcused
+        continue-on-error: true
+        uses: ./
+        with:
+          scenarios: scenarios/v_formation_from_pads.yaml
+          seeds: "1"
+          expect: swarm_coordination/test/fixtures/expectations/all_pass.yaml
+          junit-path: unexcused-scenario-results.xml
+          job-summary: "false"
+
+      - name: A failure the expectations write down (must pass)
+        id: recorded
+        uses: ./
+        with:
+          scenarios: swarm_coordination/test/fixtures/scenarios
+          seeds: "1"
+          expect: swarm_coordination/test/fixtures/expectations/impossible_deadline.yaml
+          junit-path: recorded-scenario-results.xml
+          job-summary: "false"
+
+      - name: The action passed what it must pass and failed what it must fail
         env:
           SUITE_PASSED: ${{ steps.suite.outputs.passed }}
           FAILING_OUTCOME: ${{ steps.failing.outcome }}
           FAILING_PASSED: ${{ steps.failing.outputs.passed }}
+          UNEXCUSED_OUTCOME: ${{ steps.unexcused.outcome }}
+          UNEXCUSED_PASSED: ${{ steps.unexcused.outputs.passed }}
+          RECORDED_PASSED: ${{ steps.recorded.outputs.passed }}
         run: |
           test "$SUITE_PASSED" = "true"
           test "$FAILING_OUTCOME" = "failure" \
             || { echo "::error::the scenario action passed a scenario that must fail"; exit 1; }
           test "$FAILING_PASSED" = "false"
           grep -q 'failures="1"' failing-scenario-results.xml
+          test "$UNEXCUSED_OUTCOME" = "failure" \
+            || { echo "::error::an expectations file did not replace the scenario's own expect"; exit 1; }
+          test "$UNEXCUSED_PASSED" = "false"
+          grep -q 'failures="1"' unexcused-scenario-results.xml
+          test "$RECORDED_PASSED" = "true"
+          grep -q '<skipped' recorded-scenario-results.xml
 
       - name: Upload scenario reports
         if: always()

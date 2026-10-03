@@ -4,7 +4,9 @@ optional mutation check, and the reports CI reads (JSON, JUnit XML, Markdown).
 Outcomes per scenario: ``passed`` (every seed passed), ``failed``, ``xfail`` (declared
 ``expect: fail`` and it did — a known limitation, written down) and ``xpass`` (declared a
 failure but passed: the limitation is gone or the scenario is wrong, so it fails the
-suite until someone updates it).
+suite until someone updates it). The declaration is the scenario file's own ``expect``, the
+reference swarm's; given ``expectations`` it is the one written for the swarm under test
+(expectations.py), and the files' own is ignored.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree
 
+from .expectations import Expectations
 from .harness import run_scenario
 from .model import Verdict
 from .mutants import MUTANTS, Mutant
@@ -49,6 +52,14 @@ class SuiteReport:
     scenarios: list[ScenarioReport] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     mutants: list[Mutant] | None = None
+    expectations: Expectations | None = None  # None: each scenario file's own expect
+
+    def unused_expectations(self) -> list[str]:
+        """Scenarios the expectations name that this run did not load: a typo, or a stale
+        entry. Reported, not an error — one file may serve a run of a few scenarios."""
+        if self.expectations is None:
+            return []
+        return self.expectations.unused(s.spec.name for s in self.scenarios)
 
     def survivors(self) -> list[str]:
         if self.mutants is None:
@@ -78,22 +89,29 @@ def run_suite(
     seeds: list[int],
     mutation: bool = False,
     trace_dir: Path | None = None,
+    expectations: Expectations | None = None,
 ) -> SuiteReport:
-    report = SuiteReport(sut=sut.name, seeds=list(seeds))
+    report = SuiteReport(sut=sut.name, seeds=list(seeds), expectations=expectations)
     try:
         files = discover(paths)
     except ScenarioError as exc:
         report.errors.append(str(exc))
         return report
+    if expectations is not None and expectations.source:
+        # An expectations file kept among the scenarios is not one of them.
+        own = Path(expectations.source).resolve()
+        files = [f for f in files if Path(f).resolve() != own]
     if not files:
         report.errors.append(f"no scenario files found in {', '.join(map(str, paths))}")
 
     specs = []
     for path in files:
         try:
-            specs.append(load_scenario(path))
+            spec = load_scenario(path)
         except ScenarioError as exc:
             report.errors.append(str(exc))
+        else:
+            specs.append(spec if expectations is None else expectations.apply(spec))
     names = [s.name for s in specs]
     report.errors += [
         f"scenario name '{n}' is used twice" for n in sorted(set(names)) if names.count(n) > 1
@@ -215,7 +233,7 @@ def to_junit(report: SuiteReport) -> str:
             if scenario.spec.expect == "fail":
                 if verdict.passed:
                     failures += 1
-                    message = "passed, but the scenario declares expect: fail"
+                    message = "passed, but it is expected to fail"
                     ElementTree.SubElement(
                         case, "failure", message=message
                     ).text = f"{message} ({scenario.spec.expect_reason})"
@@ -285,6 +303,14 @@ def to_markdown(report: SuiteReport) -> str:
         + ", ".join(f"{n} {k}" for k, n in counts.items() if n),
         "",
     ]
+    if report.expectations is not None:
+        source = report.expectations.source
+        origin = f"`{source}`" if source else "the caller"
+        lines += [f"Expectations from {origin}: the scenario files' own `expect` is ignored.", ""]
+    unused = report.unused_expectations()
+    if unused:
+        names = ", ".join(f"`{name}`" for name in unused)
+        lines += [f"**Expected to fail, but not in this run** (ignored): {names}", ""]
     if report.errors:
         lines += ["**Errors**", ""] + [f"- {e}" for e in report.errors] + [""]
     mutation = report.mutants is not None

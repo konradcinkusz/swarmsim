@@ -89,3 +89,27 @@ adequacy is shown by the broken swarms it catches.**
 
 Worked example: `scenarios/low_battery_handover.yaml`, `swarm_coordination/swarm_coordination/supervisor.py`,
 `swarm_coordination/test/test_scenario_runner.py`.
+
+## Amendment — 2026-10-03: a known limitation belongs to a swarm, not to a scenario file
+
+`expect: fail` in a scenario file is a statement about one swarm, this repository's
+reference swarm. Flown by another swarm, the same scenario can be a gap that swarm has
+closed (reported `xpass`, which fails the suite) or can fail for a reason of that swarm's
+own with nothing written down to excuse it, and the run store compared the two runs as a
+regression where one of them was a fix (findings F4 and F12 of swarmsim-lab). Whether a
+failure is a regression or a known gap belongs to the (scenario, swarm) pair.
+
+The scenario files keep the reference swarm's expectations, as before. `--expect FILE`
+(the action's `expect` input) replaces them with the swarm under test's own: a YAML file,
+`contracts/scenario/expectations.v1.schema.json`, that names the scenarios the swarm is
+expected to fail and gives a reason for each. A scenario named there must fail, every other
+must pass, and the files' own `expect` is not consulted. The expectation is applied as the
+scenarios are loaded, so the outcomes, the mutation check, the reports and a stored run all
+carry the one that applied, and the report contract is unchanged. ADR-0011's comparison,
+which reads stored outcomes, follows: a swarm that closes the reference's gap compares as
+`changed` (the expectation itself changed) instead of `regressed`.
+
+A name that matches no scenario in the run is reported and ignored, not an error: one file
+can serve a run of a few scenarios. The cost is that a stale entry survives until someone
+reads the report; a misspelt one at least leaves its scenario expected to pass, so the
+suite goes red and the report names the unknown entry.

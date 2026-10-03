@@ -10,7 +10,9 @@
 #
 # The swarm under test is swarmsim's own reference swarm unless `sut` names another one:
 # MODULE:ATTRIBUTE importable from the workspace, implementing the protocol in
-# swarm_coordination/swarm_coordination/scenarios/sut.py.
+# swarm_coordination/swarm_coordination/scenarios/sut.py. A scenario file's `expect: fail`
+# is a known limitation of the reference swarm; another swarm's known limitations go in a
+# file of their own, `expect` (contracts/scenario/expectations.v1.schema.json).
 #
 #   - uses: konradcinkusz/swarmsim@<ref>
 #     with:
@@ -48,6 +50,15 @@ inputs:
     description: >-
       MODULE:ATTRIBUTE of the swarm to test, importable from the workspace (a class, a
       factory, or an instance). Empty: swarmsim's reference swarm.
+    required: false
+    default: ""
+  expect:
+    description: >-
+      Optional. A YAML file of the scenarios the swarm under test is expected to fail, each
+      with a reason (contracts/scenario/expectations.v1.schema.json). A scenario file's own
+      `expect` describes swarmsim's reference swarm; with this input it is ignored: the
+      scenarios named in the file must fail and every other must pass. Empty: the scenario
+      files' own `expect`.
     required: false
     default: ""
   mutation-check:
@@ -113,6 +124,7 @@ runs:
         SEEDS: ${{ inputs.seeds }}
         SEED: ${{ inputs.seed }}
         SUT: ${{ inputs.sut }}
+        EXPECT: ${{ inputs.expect }}
         MUTATION: ${{ inputs.mutation-check }}
         JUNIT: ${{ inputs.junit-path }}
         SUMMARY: ${{ inputs.job-summary }}
@@ -125,6 +137,7 @@ runs:
         args=(run "${paths[@]}" --seed "$SEED" --seeds "$SEEDS" --junit "$JUNIT")
         if [ "$SUMMARY" = "true" ]; then args+=(--markdown "$GITHUB_STEP_SUMMARY"); fi
         if [ -n "$SUT" ]; then args+=(--sut "$SUT"); fi
+        if [ -n "$EXPECT" ]; then args+=(--expect "$EXPECT"); fi
         if [ "$MUTATION" = "true" ]; then args+=(--mutants); fi
         if [ -n "$UPLOAD_URL" ]; then args+=(--upload "$UPLOAD_URL"); fi
         if [ -n "$UPLOAD_LABEL" ]; then args+=(--label "$UPLOAD_LABEL"); fi

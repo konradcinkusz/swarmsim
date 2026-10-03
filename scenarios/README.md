@@ -18,7 +18,8 @@ package — so scenarios and a swarm under test can live in another repository:
 
 ```bash
 pip install ./swarm_coordination pyyaml jsonschema
-python -m swarm_coordination.scenarios run my_scenarios --sut my_package:MySwarm --seeds 3
+python -m swarm_coordination.scenarios run my_scenarios --sut my_package:MySwarm --seeds 3 \
+  --expect my_package/expectations.yaml     # optional: what it is expected to fail
 ```
 
 ## What runs a scenario
@@ -93,6 +94,32 @@ the formation did fly, so the window can be fixed from the report. `never_mode` 
 `xpass` and fails the suite, so the written-down limitation cannot quietly go out of date
 (`v_formation_from_pads.yaml` is one).
 
+**A known limitation is one swarm's.** The `expect` in a scenario file records what this
+repository's reference swarm fails. Another swarm flown against the same scenarios has
+limitations of its own, and may have closed the reference's, so it brings its own file and
+passes it with `--expect` (the action's `expect` input):
+
+```yaml
+version: 1    # contracts/scenario/expectations.v1.schema.json
+expect_fail:
+  follower_jammed_goes_home: >
+    The scenario jams drone_2 and drone_3 by name and expects them to be followers. This
+    swarm picks its leader from where the drones stand, so one of them can be the leader.
+```
+
+With it, the scenario files' own `expect` is ignored: the scenarios the file names must
+fail and every other must pass. A swarm that closes the reference's gap gets a plain
+`passed`, not an `xpass` that only editing the reference's scenario file would clear, and is
+held to it from then on; one that fails a scenario for its own reason has to say why, in
+writing. A name that matches no scenario in the run is listed in
+the report and ignored, so one file can serve a run of a few scenarios; a misspelt name
+leaves the scenario it meant to excuse expected to pass. Keep the file with the swarm: one
+kept among the scenarios is not run as one. The outcome each scenario met is what the
+report, the JUnit file and a stored run carry, so `GET /api/scenario-runs/compare` reads
+a swarm that closed the reference's gap as `changed` (the expectation itself changed), not
+as a regression. [`examples/expectations.yaml`](../contracts/scenario/examples/expectations.yaml)
+is the schema's example.
+
 ## The mutation check
 
 `--mutants` runs every scenario against deliberately broken versions of the reference swarm
@@ -113,6 +140,7 @@ service is called and nothing leaves the runner:
     scenarios: scenarios            # your scenario files
     seeds: "3"
     sut: my_swarm.adapter:MySwarm   # optional: your swarm, see scenarios/sut.py
+    expect: my_swarm/expectations.yaml   # optional: what it is expected to fail
 ```
 
 It writes a JUnit report (`swarmsim-scenarios.xml`) and the Markdown table to the job

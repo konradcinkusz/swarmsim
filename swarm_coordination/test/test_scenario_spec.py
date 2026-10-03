@@ -11,6 +11,7 @@ import pytest
 pytest.importorskip("jsonschema")
 pytest.importorskip("yaml")
 
+from swarm_coordination.scenarios.expectations import EXPECTATIONS_SCHEMA_NAME  # noqa: E402
 from swarm_coordination.scenarios.spec import (  # noqa: E402
     SCHEMA_NAME,
     ScenarioError,
@@ -23,7 +24,7 @@ from swarm_coordination.trajectory import Vector3  # noqa: E402
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = PACKAGE_ROOT.parent / "scenarios"
-CONTRACT = PACKAGE_ROOT.parent / "contracts" / "scenario" / SCHEMA_NAME
+SCHEMAS = [SCHEMA_NAME, EXPECTATIONS_SCHEMA_NAME]
 
 MINIMAL = {
     "version": 1,
@@ -136,17 +137,22 @@ def test_unreadable_files_and_missing_paths_are_scenario_errors(tmp_path):
         discover([tmp_path / "nowhere"])
 
 
-def test_the_schema_the_runner_ships_is_the_contract():
-    """The runner reads a copy of the schema that ships in the package, so that it works
+def _contract(schema_name):
+    return (PACKAGE_ROOT.parent / "contracts" / "scenario" / schema_name).read_text("utf-8")
+
+
+@pytest.mark.parametrize("schema_name", SCHEMAS)
+def test_the_schemas_the_runner_ships_are_the_contract(schema_name):
+    """The runner reads copies of the schemas that ship in the package, so that it works
     from a pip install. contracts/scenario/ stays the source of truth."""
-    assert schema_text() == CONTRACT.read_text(encoding="utf-8"), (
-        "the packaged scenario schema differs from the contract; copy the contract over it:\n"
-        f"  cp contracts/scenario/{SCHEMA_NAME} "
-        f"swarm_coordination/swarm_coordination/scenarios/{SCHEMA_NAME}"
+    assert schema_text(schema_name) == _contract(schema_name), (
+        f"the packaged {schema_name} differs from the contract; copy the contract over it:\n"
+        f"  cp contracts/scenario/{schema_name} "
+        f"swarm_coordination/swarm_coordination/scenarios/{schema_name}"
     )
 
 
-def test_the_built_package_contains_the_schema(tmp_path):
+def test_the_built_package_contains_the_schemas(tmp_path):
     """What an install gets is what setup.py builds, not what sits next to the source: a
     schema missing from package_data makes the installed runner fail (finding F2)."""
     pytest.importorskip("setuptools")  # CI installs it explicitly
@@ -168,6 +174,7 @@ def test_the_built_package_contains_the_schema(tmp_path):
     )
 
     assert done.returncode == 0, done.stderr
-    shipped = built / "swarm_coordination" / "scenarios" / SCHEMA_NAME
-    assert shipped.is_file(), "setup.py builds a package without the scenario schema"
-    assert shipped.read_text(encoding="utf-8") == CONTRACT.read_text(encoding="utf-8")
+    for schema_name in SCHEMAS:
+        shipped = built / "swarm_coordination" / "scenarios" / schema_name
+        assert shipped.is_file(), f"setup.py builds a package without {schema_name}"
+        assert shipped.read_text(encoding="utf-8") == _contract(schema_name)

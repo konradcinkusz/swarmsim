@@ -1,16 +1,19 @@
 """Command line: python -m swarm_coordination.scenarios {run,validate,mutants} ...
 
-    run       [PATH ...] [--seed N] [--seeds K] [--sut MODULE:ATTR] [--mutants]
-              [--junit FILE] [--json FILE] [--markdown FILE] [--traces DIR]
+    run       [PATH ...] [--seed N] [--seeds K] [--sut MODULE:ATTR] [--expect FILE]
+              [--mutants] [--junit FILE] [--json FILE] [--markdown FILE] [--traces DIR]
               [--upload API_URL [--label TEXT]]   (token: $SWARMSIM_API_TOKEN)
     validate  [PATH ...]       check scenario files against the schema, run nothing
     mutants                    list the broken swarms the mutation check uses
 
 PATH is a scenario file or a directory searched for *.yaml (default: ./scenarios).
+A scenario's expectation is its file's own `expect`, written for this repo's swarm;
+--expect FILE replaces those with the ones written for the swarm under test.
 Exit status: 0 when every scenario met its expectation (and, with --mutants, every
 scenario failed at least one mutant and every mutant was failed by one), 1 when not,
-2 when the scenarios or the arguments could not be used. A failed --upload is reported
-and never changes it: the verdict is made here, storing it is only remembering it.
+2 when the scenarios, the expectations or the arguments could not be used. A failed
+--upload is reported and never changes it: the verdict is made here, storing it is only
+remembering it.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ import os
 import sys
 from pathlib import Path
 
+from .expectations import load_expectations
 from .mutants import MUTANTS
 from .runner import run_suite, to_json, to_junit, to_markdown
 from .spec import ScenarioError, discover, load_scenario
@@ -64,6 +68,12 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--seed", type=int, default=1, help="first seed (default 1)")
     run.add_argument("--seeds", type=int, default=1, help="how many seeds per scenario")
     run.add_argument("--sut", help="MODULE:ATTRIBUTE of another swarm (default: this repo's)")
+    run.add_argument(
+        "--expect",
+        metavar="FILE",
+        help="the scenarios this swarm is expected to fail, with reasons (YAML); "
+        "replaces the scenario files' own expect",
+    )
     run.add_argument("--mutants", action="store_true", help="also run the mutation check")
     run.add_argument("--junit", help="write a JUnit XML report here")
     run.add_argument("--json", help="write a JSON report here")
@@ -104,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--seeds must be at least 1")
     try:
         sut = _load_sut(args.sut)
+        expectations = load_expectations(args.expect) if args.expect else None
     except ScenarioError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -121,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         seeds,
         mutation=args.mutants,
         trace_dir=Path(args.traces) if args.traces else None,
+        expectations=expectations,
     )
     markdown = to_markdown(report)
     print(markdown)

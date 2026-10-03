@@ -1,0 +1,7 @@
+# A swarm expected to fail the fixture scenario impossible_deadline, whose 5 s deadline no
+# swarm meets. CI flies the fixtures with this file to show the failure is recorded, not hidden:
+# the run passes because the scenario failed as written down.
+version: 1
+expect_fail:
+  impossible_deadline: >
+    No swarm flies a 20 m route in 5 s; the scenario is a fixture for the failure path.

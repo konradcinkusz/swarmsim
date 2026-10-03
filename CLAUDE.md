@@ -57,7 +57,9 @@ reasoning; check there before assuming a gap is accidental.
   Run them with `--mutants`. A new behaviour needs a scenario that fails without it and
   a mutant in `scenarios/mutants.py` that proves so; a policy lives in product code
   (`supervisor.py`, `drone_controller.py`), never only inside a scenario. A known gap is
-  written down as `expect: fail` with a reason, not deleted.
+  written down as `expect: fail` with a reason, not deleted — in the scenario file when it
+  is the reference swarm's, and in the swarm's own `--expect` file
+  (`contracts/scenario/expectations.v1.schema.json`) when it is another's.
 - Changing a message that crosses rosbridge (`/swarm/mission`, `/swarm/command`,
   `/swarm/state`): change `contracts/rosbridge/` first — schema and example — then both
   sides (`RosBridgeProtocol.cs`, `mission_planning.py` / `swarm_state.py`). Both test
@@ -89,13 +91,13 @@ reasoning; check there before assuming a gap is accidental.
   in the image or an airframe copy.
 - Adding to `.gitignore`: name the files, not an extension. `*.env` once hid the
   committed drone configs in `simulation/px4-configs/`.
-- Changing the scenario file format: the contract is `contracts/scenario/scenario.v1.schema.json`.
-  The runner reads a copy that ships inside the package
-  (`swarm_coordination/swarm_coordination/scenarios/scenario.v1.schema.json`), so that it
-  runs from a pip install, with no checkout. After changing the contract, copy it over the
-  packaged one; `test_the_schema_the_runner_ships_is_the_contract` fails with the command
-  if you forget, and `test_the_built_package_contains_the_schema` fails if `setup.py` stops
-  shipping it.
+- Changing the scenario file format: the contract is `contracts/scenario/scenario.v1.schema.json`
+  (the `--expect` file's is `expectations.v1.schema.json` beside it). The runner reads copies
+  that ship inside the package (`swarm_coordination/swarm_coordination/scenarios/`), so that
+  it runs from a pip install, with no checkout. After changing a contract, copy it over the
+  packaged one; `test_the_schemas_the_runner_ships_are_the_contract` fails with the command
+  if you forget, and `test_the_built_package_contains_the_schemas` fails if `setup.py` stops
+  shipping one.
 - Changing the scenario report (`runner.to_json`): it is a contract,
   `contracts/scenario/report.v1.schema.json`, that `SwarmApi.Api` stores and compares.
   Change the schema, regenerate the example from the repository root —
