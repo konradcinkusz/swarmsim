@@ -113,3 +113,25 @@ A name that matches no scenario in the run is reported and ignored, not an error
 can serve a run of a few scenarios. The cost is that a stale entry survives until someone
 reads the report; a misspelt one at least leaves its scenario expected to pass, so the
 suite goes red and the report names the unknown entry.
+
+## Amendment — 2026-10-03 (later): another swarm brings its own mutants
+
+The mutation check was the reference swarm's. `--mutants` breaks this repository's swarm, so
+a swarm given with `--sut` could not have one, and its authors wrote a runner of their own for
+it (finding F1 of swarmsim-lab). `--mutants-from MODULE:ATTR` (the action's `mutants-from`)
+runs the same check with a sequence of `Mutant(name, breaks, sut)` that the swarm's author
+provides, each `sut` a broken version of the swarm under test. Flown through it, the five
+mutants of that lab's swarm and its reference swarm gave the check the lab's own test had
+reached: each mutant caught by the scenario written for it, every scenario holding at least
+one.
+
+- It is a separate option and not `--mutants MODULE:ATTR`: an option with an optional value
+  takes the next word, so `run --mutants scenarios` would read the scenario directory as
+  the mutants.
+- The two exclude each other, and `--mutants` with `--sut` is still refused, now with a pointer
+  to the new option.
+- `Mutant.sut` is typed as any swarm, which is how the runner always treated it.
+- The runner checks the shape of what it is given, not its worth. Which breakages are
+  plausible is the swarm author's judgement, as it was for this repository's eight. The check
+  makes each one answer to a scenario, and each scenario to a mutant.
+
