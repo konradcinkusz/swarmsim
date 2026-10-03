@@ -382,6 +382,35 @@
             }
           }
         },
+        "travel_after": {
+          "description": "No drone that is airborne when the (last) event of that kind happens strays more than max_m, horizontally, from where it was then, up to to_s (default: the end of the run). With drone, only that drone is checked. Fails when no drone was airborne at the event: nothing was measured. Where an absolute final_position would encode how fast the swarm flies, this asks what the event is for.",
+          "type": "object",
+          "required": [
+            "event",
+            "max_m"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "enum": [
+                "mission",
+                "command",
+                "battery",
+                "comms_loss"
+              ]
+            },
+            "max_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "drone": {
+              "$ref": "#/$defs/drone"
+            },
+            "to_s": {
+              "$ref": "#/$defs/time"
+            }
+          }
+        },
         "never_mode": {
           "description": "The drone's autopilot never enters mode (e.g. AUTO.RTL) during the run.",
           "type": "object",

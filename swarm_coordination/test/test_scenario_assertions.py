@@ -1,11 +1,14 @@
 """Assertions read a trace and measure; checked here against hand-built traces."""
 
+from types import SimpleNamespace
+
 import pytest
 
 pytest.importorskip("jsonschema")
 
 from swarm_coordination.scenarios import assertions  # noqa: E402
 from swarm_coordination.scenarios.model import DroneSample, Frame, Trace  # noqa: E402
+from swarm_coordination.scenarios.spec import Event  # noqa: E402
 from swarm_coordination.trajectory import Vector3  # noqa: E402
 
 HOMES = {"drone_1": Vector3(0.0, 0.0, 0.0), "drone_2": Vector3(0.0, 3.0, 0.0)}
@@ -356,6 +359,114 @@ def test_formation_error_measures_the_shape_and_reports_the_worst_frame():
     (violation,) = outcome.violations
     assert violation.drone_ids == ("drone_2", "drone_1") and violation.timestamp_s == 11.0
     assert violation.measured_value == 1.5 and violation.threshold == 1.0
+
+
+def _timeline(*events):
+    """What travel_after reads of a scenario: its events, (at_s, kind, data) each."""
+    return SimpleNamespace(events=tuple(Event(*e) for e in events))
+
+
+COMMAND_AT_15 = _timeline((1.0, "mission", {}), (15.0, "command", "land"))
+
+
+def _travel(trace, spec=COMMAND_AT_15, **params):
+    params.setdefault("event", "command")
+    return assertions.ASSERTIONS["travel_after"](spec, trace, params)
+
+
+def _pair(t, one, two):
+    return _frame(t, _sample("drone_1", one), _sample("drone_2", two))
+
+
+def test_travel_after_measures_how_far_each_drone_got_from_where_the_event_found_it():
+    trace = _trace(
+        [
+            _pair(14.0, Vector3(10, 0, 5), Vector3(10, 3, 5)),  # before the event: not counted
+            _pair(15.0, Vector3(17, 0, 5), Vector3(17, 3, 5)),
+            _pair(16.0, Vector3(17.2, 0, 3), Vector3(22, 3, 5)),
+            _pair(17.0, Vector3(17.2, 0, 1), Vector3(25, 3, 5)),
+        ]
+    )
+
+    outcome = _travel(trace, max_m=3)
+
+    assert not outcome.passed and outcome.measured == pytest.approx(8.0)
+    (violation,) = outcome.violations  # drone_1 coasted 0.2 m, which is within the limit
+    assert violation.drone_ids == ("drone_2",)
+    assert (violation.timestamp_s, violation.measured_value, violation.threshold) == (17.0, 8.0, 3)
+    assert "from where it was at the command (t=15 s)" in violation.description
+    assert _travel(trace, max_m=9).passed
+
+
+def test_travel_after_is_horizontal_so_descending_to_land_is_not_travel():
+    trace = _trace(
+        [
+            _pair(15.0, Vector3(17, 0, 5), Vector3(17, 3, 5)),
+            _pair(25.0, Vector3(17, 0, 0), Vector3(17, 3, 0)),
+        ]
+    )
+
+    outcome = _travel(trace, max_m=0.5)
+
+    assert outcome.passed and outcome.measured == 0.0
+
+
+def test_travel_after_fails_when_no_drone_was_airborne_at_the_event():
+    """A swarm that never flew stood still, which is not the same as stopping where it was."""
+    trace = _trace(
+        [
+            _pair(15.0, Vector3(0, 0, 0), Vector3(0, 3, 0)),
+            _pair(16.0, Vector3(0, 0, 0), Vector3(0, 3, 0)),
+        ]
+    )
+
+    outcome = _travel(trace, max_m=3)
+
+    assert not outcome.passed and outcome.measured is None
+    (violation,) = outcome.violations
+    assert violation.drone_ids == () and violation.timestamp_s == 15.0
+    assert "no drone was airborne at the command (t=15 s)" in violation.description
+    assert "not measured" in violation.description
+
+
+def test_travel_after_with_a_named_drone_fails_when_that_drone_was_not_flying():
+    trace = _trace(
+        [
+            _pair(15.0, Vector3(17, 0, 5), Vector3(0, 3, 0)),
+            _pair(16.0, Vector3(17, 0, 5), Vector3(0, 3, 0)),
+        ]
+    )
+
+    assert _travel(trace, max_m=3, drone="drone_1").passed
+    outcome = _travel(trace, max_m=3, drone="drone_2")
+
+    assert not outcome.passed
+    assert outcome.violations[0].drone_ids == ("drone_2",)
+    assert "drone_2 was not airborne at the command" in outcome.violations[0].description
+
+
+def test_travel_after_counts_from_the_last_event_of_its_kind_and_up_to_to_s():
+    spec = _timeline((10.0, "command", "hold"), (20.0, "command", "land"))
+    trace = _trace(
+        [
+            _pair(10.0, Vector3(5, 0, 5), Vector3(5, 3, 5)),
+            _pair(20.0, Vector3(15, 0, 5), Vector3(15, 3, 5)),  # 10 m on, after the first
+            _pair(22.0, Vector3(15.5, 0, 5), Vector3(15.5, 3, 5)),
+            _pair(30.0, Vector3(21, 0, 5), Vector3(21, 3, 5)),  # moving again, late
+        ]
+    )
+
+    assert _travel(trace, spec, max_m=1, to_s=22.0).passed
+    assert _travel(trace, spec, max_m=1, to_s=22.0).measured == pytest.approx(0.5)
+    assert not _travel(trace, spec, max_m=1).passed  # the whole rest of the run
+
+
+def test_travel_after_fails_when_the_scenario_has_no_such_event():
+    trace = _trace([_pair(15.0, Vector3(17, 0, 5), Vector3(17, 3, 5))])
+
+    outcome = _travel(trace, _timeline((1.0, "mission", {})), max_m=3)
+
+    assert not outcome.passed and "has no command event" in outcome.violations[0].description
 
 
 def test_never_mode_reports_the_first_time_the_mode_was_entered():

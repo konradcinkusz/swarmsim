@@ -16,5 +16,5 @@ events:
     command: land
 assertions:
   - all_landed: {by_s: 35}
-  - final_position: {drone: drone_1, position: [16, 0, 0], tolerance_m: 6}
+  - travel_after: {event: command, max_m: 3}
   - min_separation: {min_m: 1.5}
