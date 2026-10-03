@@ -5,7 +5,7 @@ description: >
   formation — shorter than the 5 s comms timeout. It must hold its slot, pick the leader
   up again when contact returns and finish the mission, never giving up and flying home.
   Contact returns at 28 s, and the formation flies until the leader lands at about 37 s:
-  from 32 s drone_3 must be back within 2.5 m of its slot — close to the 2.2 m lag every
+  from 32 s the line must be back within 2.5 m of its shape — close to the 2.2 m lag every
   follower of a line holds in steady flight. The check once started at 40 s, after the
   formation had landed, so it measured nothing and passed whatever drone_3 did.
 drones: 3

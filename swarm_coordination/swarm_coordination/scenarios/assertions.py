@@ -20,6 +20,7 @@ from itertools import combinations
 
 from ..mission_planning import FORMATIONS
 from ..trajectory import Vector3
+from .fit import fit_formation
 from .model import AssertionOutcome, Frame, Trace, Violation
 from .spec import AssertionSpec, ScenarioSpec
 
@@ -45,10 +46,9 @@ def _window_text(params: dict) -> str:
     return f"from t={start:g} s on"
 
 
-def _flying(frame: Frame, drone_id: str):
-    """The drone's sample if it is airborne under offboard control in ``frame``, else None."""
-    sample = _sample(frame, drone_id)
-    return sample if sample.airborne and sample.mode == "OFFBOARD" else None
+def _flying(frame: Frame) -> dict[str, Vector3]:
+    """Where the drones airborne under offboard control are in ``frame``, in id order."""
+    return {s.drone_id: s.position for s in frame.drones if s.airborne and s.mode == "OFFBOARD"}
 
 
 def _outcome(kind: str, measured, unit: str, violations: list[Violation]) -> AssertionOutcome:
@@ -250,6 +250,16 @@ def final_position(spec: ScenarioSpec, trace: Trace, params: dict) -> AssertionO
 
 
 def formation_error(spec: ScenarioSpec, trace: Trace, params: dict) -> AssertionOutcome:
+    """The drones flying the formation fit its shape within ``max_m``.
+
+    A mission names the formation, the drone count and the spacing; who leads and who takes
+    which slot is the swarm's decision. So the check does not assume the reference swarm's
+    roles (drone_1 leads, the rest take the slots in id order). In every frame in which
+    exactly ``drone_count`` drones fly under offboard control, it finds the closest fit
+    (fit.py): some drone as the apex, the others matched to the slots around it. The error is
+    the largest distance of any drone from its slot in that fit, and the worst frame counts.
+    ``leader`` pins the apex to one drone.
+    """
     limit = float(params["max_m"])
     formation_missions = [p for _, _, p in trace.missions if p["type"] == "formation"]
     if not formation_missions:
@@ -258,64 +268,61 @@ def formation_error(spec: ScenarioSpec, trace: Trace, params: dict) -> Assertion
         )
         return _outcome("formation_error", None, "m", [violation])
     mission = formation_missions[-1]
-    ids = list(trace.homes)
-    leader = params.get("leader", ids[0])
-    start = ids.index(leader) + 1
-    followers = ids[start : start + mission["drone_count"] - 1]
-    offsets = FORMATIONS[mission["formation"]](len(followers), mission["spacing_m"])
+    count = mission["drone_count"]
+    shape = mission["formation"]
+    offsets = FORMATIONS[shape](count - 1, mission["spacing_m"])
+    leader = params.get("leader")
 
-    worst: dict[str, tuple[float, float]] = {}
+    def complete(frame: Frame) -> dict[str, Vector3] | None:
+        flying = _flying(frame)
+        if len(flying) != count or (leader is not None and leader not in flying):
+            return None
+        return flying
+
+    worst = None
     for frame in _window(trace, params):
-        lead = _flying(frame, leader)
-        if lead is None:
+        flying = complete(frame)
+        if flying is None:
             continue
-        for follower, offset in zip(followers, offsets, strict=True):
-            sample = _flying(frame, follower)
-            if sample is None:
-                continue
-            error = sample.position.distance_to(lead.position + offset)
-            if follower not in worst or error > worst[follower][0]:
-                worst[follower] = (error, frame.t_s)
-    measured = max((e for e, _ in worst.values()), default=None)
-    violations = [
-        Violation(
-            "formation_error",
-            (follower, leader),
-            t,
-            round(error, 3),
-            limit,
-            f"{follower} was {error:.2f} m off its slot behind {leader} at t={t:.1f} s "
-            f"(limit {limit:g} m)",
-        )
-        for follower, (error, t) in sorted(worst.items())
-        if error > limit
-    ]
-    for follower in followers:
-        if follower in worst:
-            continue
+        fit = fit_formation(flying, offsets, leader)
+        if worst is None or fit.error_m > worst[0].error_m:
+            worst = (fit, frame.t_s)
+
+    if worst is None:
         # Say when the formation did fly, so the window can be fixed without a debugger.
-        times = [
-            f.t_s
-            for f in trace.frames
-            if _flying(f, leader) is not None and _flying(f, follower) is not None
-        ]
-        flew = "it never did in this run"
+        times = [f.t_s for f in trace.frames if complete(f) is not None]
+        saw = "that many were never flying at once in this run"
         if times:
-            flew = f"it did so from t={times[0]:g} s to t={times[-1]:g} s"
+            saw = f"they did from t={times[0]:g} s to t={times[-1]:g} s"
+        pinned = "" if leader is None else f", with {leader} among them"
+        violation = Violation(
+            "formation_error",
+            (),
+            None,
+            None,
+            limit,
+            f"no frame {_window_text(params)} had {count} drones flying the {shape} formation "
+            f"under offboard control{pinned}, so its error was not measured ({saw})",
+        )
+        return _outcome("formation_error", None, "m", [violation])
+
+    fit, t = worst
+    violations = []
+    if fit.error_m > limit:
+        follower = max(fit.errors, key=fit.errors.__getitem__)
         violations.append(
             Violation(
                 "formation_error",
-                (follower, leader),
-                None,
-                None,
+                (follower, fit.leader),
+                t,
+                round(fit.error_m, 3),
                 limit,
-                f"{follower} was not flying its slot behind {leader} {_window_text(params)} "
-                f"({flew}), so its error was not measured",
+                f"{follower} was {fit.error_m:.2f} m off its slot behind {fit.leader} at "
+                f"t={t:.1f} s, in the closest fit of the {count} drones to the {shape} "
+                f"formation (limit {limit:g} m)",
             )
         )
-    return _outcome(
-        "formation_error", None if measured is None else round(measured, 3), "m", violations
-    )
+    return _outcome("formation_error", round(fit.error_m, 3), "m", violations)
 
 
 def never_mode(spec: ScenarioSpec, trace: Trace, params: dict) -> AssertionOutcome:

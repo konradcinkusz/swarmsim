@@ -359,7 +359,7 @@
           }
         },
         "formation_error": {
-          "description": "While airborne between from_s and to_s, every follower stays within max_m of its slot: the leader's true position plus the offset the (last) formation mission gives it. A follower that never flies the formation in the window fails: its error was not measured.",
+          "description": "In every frame between from_s and to_s in which exactly drone_count drones fly under offboard control, the drones fit the (last) formation mission's shape within max_m: some drone as the apex and the others matched one-to-one to the slots around it (the apex's true position plus the formation's offsets), with the largest distance of any drone from its slot as small as it can be. Who leads and who takes which slot is the swarm's choice, not the mission's. A window with no such frame fails: nothing was measured.",
           "type": "object",
           "required": [
             "max_m"
@@ -371,6 +371,7 @@
               "exclusiveMinimum": 0
             },
             "leader": {
+              "description": "Pin the apex of the fit to this drone. Without it, any flying drone may lead.",
               "$ref": "#/$defs/drone"
             },
             "from_s": {
