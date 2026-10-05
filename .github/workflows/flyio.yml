@@ -81,7 +81,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      - uses: superfly/flyctl-actions/setup-flyctl@1.6
       - id: detect
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -112,8 +112,8 @@ jobs:
       image: ${{ steps.label.outputs.image }}
     steps:
       - uses: actions/checkout@v7
-      - uses: superfly/flyctl-actions/setup-flyctl@1.5
-      - uses: docker/setup-buildx-action@v3
+      - uses: superfly/flyctl-actions/setup-flyctl@1.6
+      - uses: docker/setup-buildx-action@v4
 
       # The registry namespace is the app, so a first deploy creates the app before pushing
       # to it — from here, never from a laptop (FLY-IO-DEPLOYMENT §11).
@@ -136,7 +136,7 @@ jobs:
       - id: label
         run: echo "image=registry.fly.io/${FLY_APP}:${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: backend
           file: docker/Dockerfile.api
@@ -152,7 +152,7 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v7
-      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      - uses: superfly/flyctl-actions/setup-flyctl@1.6
 
       - name: Ensure the scenario-run volume exists
         env:
